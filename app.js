@@ -13,7 +13,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 /* ------------------------------------------------------------ state */
 const S = {
-  session: null, me: null, stages: [], settings: {}, jobs: [], people: [],
+  session: null, me: null, stages: [], settings: {}, jobs: [], people: [], types: [],
   view: "crm", loc: "All", openId: null, busy: false
 };
 
@@ -58,7 +58,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot)/, "$1");
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot)/, "$1");
   toast(m, true);
 }
 
@@ -125,6 +125,12 @@ function slaText(j) {
   if (j.sla_status === "Due today") return "due today";
   return j.days_in_stage + "/" + j.sla_days + "d";
 }
+/* the list, plus whatever odd value this job already carries */
+function typeOptions(current) {
+  const list = S.types.slice();
+  if (current && !list.includes(current)) list.push(current);
+  return list.map(t => `<option ${t === current ? "selected" : ""}>${esc(t)}</option>`).join("");
+}
 function teamFor(stageName) {
   const st = stageByName(stageName);
   const mods = st ? st.modules || [] : [];
@@ -141,13 +147,15 @@ function slotNeeded(job, toStage) {
 
 /* ------------------------------------------------------------ data */
 async function loadReference() {
-  const [st, se, pf, pa] = await Promise.all([
+  const [st, se, pf, pa, ty] = await Promise.all([
     sb.from("stages").select("*").order("ordinal"),
     sb.from("settings").select("key,value"),
     sb.from("profiles").select("id,full_name,email,is_admin,active").order("full_name"),
-    sb.from("profile_access").select("profile_id,module")
+    sb.from("profile_access").select("profile_id,module"),
+    sb.from("shoot_types").select("name,sort").order("sort")
   ]);
-  for (const r of [st, se, pf, pa]) if (r.error) throw r.error;
+  for (const r of [st, se, pf, pa, ty]) if (r.error) throw r.error;
+  S.types = (ty.data || []).map(t => t.name);
   S.stages = st.data || [];
   S.settings = Object.fromEntries((se.data || []).map(r => [r.key, r.value]));
   S.people = (pf.data || []).map(p => ({
@@ -567,6 +575,15 @@ function detailSection(j) {
   return `<div class="sec"><h5>Details</h5><dl class="kv">
     <dt>Location</dt><dd><select class="inp" onchange="A.setJobLoc(${j.id},this.value)">
       ${LOCATIONS.map(l => `<option ${l === j.location ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></dd>
+    <dt>Phone</dt><dd>${j.phone
+      ? `<a href="tel:${esc(j.phone)}" style="color:var(--rose);font-weight:600">${esc(j.phone)}</a>`
+      : `<span style="color:var(--red)">missing</span>`}
+      <button class="btn sm" style="margin-left:6px" onclick="A.editContact(${j.id})">Edit</button></dd>
+    <dt>Email</dt><dd>${j.email
+      ? `<a href="mailto:${esc(j.email)}" style="color:var(--ink-soft)">${esc(j.email)}</a>`
+      : `<span style="color:var(--ink-soft)">—</span>`}</dd>
+    <dt>Shoot type</dt><dd><select class="inp" onchange="A.setType(${j.id},this.value)">
+      ${typeOptions(j.shoot_type)}</select></dd>
     <dt>Source</dt><dd>${esc(j.source || "—")}</dd>
     <dt>Deliverables</dt><dd>Photos${j.has_video ? " + video" : ""}${j.has_album ? " + album" : ""}${!j.has_video && !j.has_album ? " only (digital)" : ""}
       <div class="acts" style="margin-top:6px">
@@ -673,12 +690,14 @@ function lifeView() {
   <div class="grid2"><div>
     <div class="panel"><h3>Where enquiries come from</h3><p class="ph">Every job on record.</p>
       ${barsHTML(SOURCES.map(s => [s, S.jobs.filter(j => j.source === s).length]))}</div>
-    <div class="panel"><h3>Pipeline funnel</h3><p class="ph">How many have reached each CRM stage or beyond.</p>
-      ${barsHTML(funnel)}</div>
+    <div class="panel"><h3>Shoot types</h3><p class="ph">What the studio is actually selling.</p>
+      ${barsHTML(S.types.map(t => [t, S.jobs.filter(j => j.shoot_type === t).length]))}</div>
   </div><div>
     <div class="panel"><h3>Jobs by location</h3><p class="ph">Whole pipeline.</p>
       ${barsHTML(LOCATIONS.map(l => [l, S.jobs.filter(j => j.location === l).length]))}</div>
-    <div class="panel"><h3>Deliverables mix</h3><p class="ph">What people are actually buying.</p>
+    <div class="panel"><h3>Pipeline funnel</h3><p class="ph">How many have reached each CRM stage or beyond.</p>
+      ${barsHTML(funnel)}</div>
+    <div class="panel"><h3>Deliverables mix</h3><p class="ph">Photos, album and video.</p>
       ${barsHTML([["Photos only", p.filter(j => !j.has_video && !j.has_album).length],
                   ["With album", p.filter(j => j.has_album).length],
                   ["With video", p.filter(j => j.has_video).length]])}</div>
@@ -715,13 +734,14 @@ function slaView() {
         ${[["owed_from_stage", "Money counts as owed from"],
            ["share_from_stage", "Client can see files from"],
            ["pay_gate_stage", "Delivery blocked at"],
-           ["booked_stage", "Shoot slot required from"],
+           ["booked_stage", "Advance and shoot slot required from"],
            ["shoot_date_from", "TBD no longer accepted from"]].map(([k, lbl]) => `<tr>
           <td><b>${lbl}</b></td>
           <td><select class="inp" onchange="A.setSetting('${k}',this.value)">
             ${flow().map(s => `<option ${s.name === S.settings[k] ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
           </select></td></tr>`).join("")}
-      </tbody></table></div>
+      </tbody></table>
+      <p class="hint">Shoot types are managed in the database — ask me to add one.</p></div>
   </div><div>
     <div class="panel"><h3>SLA breach email</h3><p class="ph">Daily summary to the founder.</p>
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Send to</label>
@@ -837,9 +857,64 @@ const A = {
     await patch(id, f, thenStage ? "Marked TBD and moved to " + thenStage : "Marked TBD");
   },
 
+  editContact(id) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Contact details</h3><p class="mh">${esc(j.client_name)}</p>
+      <label>Phone</label><input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}">
+      <label>Email (optional)</label><input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}">
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveContact(${id})">Save</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+  },
+  async saveContact(id) {
+    const phone = $("ctPhone").value.trim();
+    const email = $("ctEmail").value.trim() || null;   // read before the modal closes
+    if (!phone) return toast("A phone number is required", true);
+    A.closeModal();
+    await patch(id, { phone, email }, "Contact updated");
+  },
+  async setType(id, t) { await patch(id, { shoot_type: t }, "Shoot type set to " + t); },
+
+  bookJob(id, to) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Confirm the booking</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}</p>
+      <div class="f2">
+        <div><label>Package total</label>
+          <input class="inp" id="bkVal" type="number" min="0" value="${num(j.package_value)}"></div>
+        <div><label>Advance received</label>
+          <input class="inp" id="bkAdv" type="number" min="1" value="${num(j.amount_received) || ""}" placeholder="required"></div>
+      </div>
+      <label style="margin-top:10px">Shoot date &amp; time</label>
+      <input class="inp" id="bkAt" type="datetime-local" value="${toLocalInput(j.shoot_at)}">
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveBooking(${id},'${esc(to)}',false)">Book it</button>
+        <button class="btn" onclick="A.saveBooking(${id},'${esc(to)}',true)">Book with date TBD</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">An advance is required to book. The date can be TBD for now, but must be confirmed
+        before ${esc(S.settings.shoot_date_from || "Pre-Production")}.</p>`);
+  },
+  async saveBooking(id, to, tbd) {
+    const total = parseFloat($("bkVal").value || "0") || 0;
+    const adv = parseFloat($("bkAdv").value || "0") || 0;
+    const at = $("bkAt").value;
+    if (adv <= 0) return toast("Record the advance payment to book this job", true);
+    if (total && adv > total) return toast("The advance cannot be more than the package total", true);
+    if (!tbd && !at) return toast("Pick a date and time, or choose TBD", true);
+    A.closeModal();
+    const f = { stage: to, package_value: total, amount_received: adv };
+    if (tbd) { f.shoot_tbd = true; f.shoot_at = null; }
+    else { f.shoot_at = new Date(at).toISOString(); f.shoot_tbd = false; }
+    await patch(id, f, "Booked" + (tbd ? " — date TBD" : " for " + fmtShoot(f.shoot_at)));
+  },
+
   async moveTo(id, to, override) {
     if (!to) return;
     const j = S.jobs.find(x => x.id === id);
+    const st = stageByName(to), bookedOrd = ordOf("booked_stage");
+    const crossingIntoBooked = st && !st.is_parked && st.ordinal >= bookedOrd && j.stage_no < bookedOrd;
+    if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
+      return A.bookJob(id, to);
     if (slotNeeded(j, to)) return A.setShoot(id, to);
     if (to === S.settings.pay_gate_stage && bal(j) > 0 && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed", true);
@@ -898,7 +973,12 @@ const A = {
     modal(`<h3>New enquiry</h3><p class="mh">It starts at ${esc(flow()[0].name)}.</p>
       <label>Client name</label><input class="inp" id="njName" placeholder="e.g. Divya &amp; Karthik">
       <div class="f2" style="margin-top:9px">
-        <div><label>Shoot type</label><input class="inp" id="njShoot" placeholder="Newborn"></div>
+        <div><label>Phone (required)</label><input class="inp" id="njPhone" type="tel" placeholder="98765 43210"></div>
+        <div><label>Email (optional)</label><input class="inp" id="njEmail" type="email" placeholder="optional"></div>
+      </div>
+      <div class="f2" style="margin-top:9px">
+        <div><label>Shoot type</label><select class="inp" id="njShoot">
+          ${S.types.map(t => `<option>${esc(t)}</option>`).join("")}</select></div>
         <div><label>Location</label><select class="inp" id="njLoc">
           ${LOCATIONS.map(l => `<option>${esc(l)}</option>`).join("")}</select></div>
       </div>
@@ -912,10 +992,12 @@ const A = {
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
   },
   async saveJob() {
-    const name = $("njName").value.trim(), shoot = $("njShoot").value.trim();
+    const name = $("njName").value.trim(), phone = $("njPhone").value.trim();
     if (!name) return toast("Give the client a name", true);
+    if (!phone) return toast("A phone number is required", true);
     const { error } = await sb.from("jobs").insert({
-      client_name: name, shoot_type: shoot || "Not specified",
+      client_name: name, phone, email: $("njEmail").value.trim() || null,
+      shoot_type: $("njShoot").value,
       location: $("njLoc").value, source: $("njSrc").value,
       stage: flow()[0].name, package_value: parseFloat($("njVal").value || "0") || 0,
       owner_id: S.me.id
