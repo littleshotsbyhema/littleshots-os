@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Little Shots Studio OS</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="root">
+  <div class="loader"><div class="spin"></div>Loading…</div>
+</div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dh"><button class="x" id="drawerClose">&times;</button>
+    <h2 id="dTitle"></h2><p id="dSub"></p></div>
+  <div class="db" id="dBody"></div>
+</aside>
+<div class="toast" id="toast"></div>
+<div id="modalHost"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
