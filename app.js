@@ -61,7 +61,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot)/, "$1");
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Email the terms)/, "$1");
   toast(m, true);
 }
 
@@ -138,6 +138,12 @@ function teamFor(stageName) {
   const st = stageByName(stageName);
   const mods = st ? st.modules || [] : [];
   return S.people.filter(p => p.active && (p.is_admin || p.access.some(m => mods.includes(m))));
+}
+/* must the terms go out before this move? */
+function termsNeeded(job, toStage) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked || job.terms_sent_at) return false;
+  return st.ordinal >= ordOf("terms_stage") && job.stage_no < ordOf("terms_stage");
 }
 /* does moving to this stage need a shoot slot sorted out first? */
 function slotNeeded(job, toStage) {
@@ -260,32 +266,34 @@ const A = {
     await patch(id, f, thenStage ? "Marked TBD and moved to " + thenStage : "Marked TBD");
   },
 
-  /* ---- the package email ---- */
-  async previewEmail(id) {
+  /* ---- terms and booking details ---- */
+  async previewEmail(id, thenStage) {
     const { data, error } = await sb.functions.invoke("send-package-email",
       { body: { job_id: id, preview: true } });
     if (error || (data && data.error)) return fail(error || new Error(data.error));
-    modal(`<h3>Package email</h3>
+    modal(`<h3>Terms &amp; booking details</h3>
       <p class="mh">To <b>${esc(data.to)}</b></p>
       <div style="border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#fff">
         <div style="background:var(--bg);padding:10px 13px;border-bottom:1px solid var(--line);font-size:12.5px">
           <b style="color:var(--ink-soft);font-weight:600;margin-right:6px">Subject</b>${esc(data.subject)}</div>
         <div style="padding:15px 16px;font-size:13px;line-height:1.6;max-height:320px;overflow-y:auto">${esc(data.text).replace(/\n/g, "<br>")}
-          ${data.brochure ? `<p style="margin-top:16px">
-            <span class="pill blue">📎 brochure attached</span></p>` : ""}</div>
+          ${data.has_attachment ? `<p style="margin-top:16px">
+            <span class="pill blue">📎 ${data.terms ? "terms" : ""}${data.terms && data.extra ? " + " : ""}${data.extra ? "package PDF" : ""} attached</span></p>` : ""}</div>
       </div>
-      ${data.brochure ? "" : `<p class="hint" style="color:var(--amber)">
-        No brochure is set for this shoot type, so nothing will be attached.</p>`}
+      ${data.terms ? "" : `<p class="hint" style="color:var(--amber)">
+        No terms document is set in Settings, so nothing will be attached.</p>`}
       <div class="acts" style="margin-top:16px">
-        <button class="btn p" id="sendBtn" onclick="A.sendEmail(${id})">Send it</button>
+        <button class="btn p" id="sendBtn" onclick="A.sendEmail(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          ${thenStage ? "Send and move to " + esc(thenStage) : "Send it"}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">Edit the wording in Settings. It is sent from
         ${esc((S.settings.email_from || "").replace(/.*</, "").replace(/>.*/, "") || "the studio address")}.</p>`);
   },
-  async sendEmail(id) {
+  async sendEmail(id, thenStage) {
     const btn = $("sendBtn");
     if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
-    const { data, error } = await sb.functions.invoke("send-package-email", { body: { job_id: id } });
+    const { data, error } = await sb.functions.invoke("send-package-email",
+      { body: { job_id: id, then_stage: thenStage || null } });
     if (error || (data && data.error)) {
       if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
       return fail(error || new Error(data.error));
@@ -355,6 +363,7 @@ const A = {
     const j = S.jobs.find(x => x.id === id);
     const st = stageByName(to), bookedOrd = ordOf("booked_stage");
     const crossingIntoBooked = st && !st.is_parked && st.ordinal >= bookedOrd && j.stage_no < bookedOrd;
+    if (termsNeeded(j, to)) return A.previewEmail(id, to);
     if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
       return A.bookJob(id, to);
     if (slotNeeded(j, to)) return A.setShoot(id, to);
