@@ -300,21 +300,20 @@ function notesSection(j, notes) {
 }
 
 function emailSection(j) {
-  const target = S.settings.email_stage || "Package Emailed";
-  const tOrd = (stageByName(target) || {}).ordinal || 0;
-  if (j.stage_no > tOrd || archived(j)) return "";      // already past it
-  const brochure = (S.typeRows.find(t => t.name === j.shoot_type) || {}).brochure_url
-    || S.settings.brochure_url_default || "";
-  const sent = j.stage === target;
-  return `<div class="sec"><h5>Package email</h5>
-    <div class="slot ${sent ? "set" : ""}">
-      <h6>${sent ? "✓ Package emailed" : "Send the package details"}</h6>
-      <p>${j.email
-          ? `Goes to <b>${esc(j.email)}</b>${brochure ? " with the brochure attached" : ""}.
-             ${sent ? "" : "Sending moves this job to " + esc(target) + "."}`
-          : `<span style="color:var(--red)">No email address on file.</span>
-             Add one before you can send.`}
-         ${!brochure ? `<br><span style="color:var(--amber)">No brochure set for ${esc(j.shoot_type)} yet.</span>` : ""}</p>
+  const gate = S.settings.terms_stage || "Payment Link Shared";
+  const gOrd = (stageByName(gate) || {}).ordinal || 0;
+  if (archived(j) || j.stage_no > gOrd) return "";        // done with, or past it
+  const sent = !!j.terms_sent_at;
+  const doc = (S.settings.terms_url || "").trim();
+  return `<div class="sec"><h5>Terms &amp; booking details</h5>
+    <div class="slot ${sent ? "set" : "missing"}">
+      <h6>${sent ? "✓ Terms emailed" : "Not sent yet"}</h6>
+      <p>${sent
+          ? `Sent ${when(j.terms_sent_at)}. The client has the terms and their booking details.`
+          : j.email
+            ? `Required before ${esc(gate)}. Goes to <b>${esc(j.email)}</b>${doc ? " with the terms attached" : ""}.`
+            : `<span style="color:var(--red)">No email address on file.</span> Add one — the terms have to go out before ${esc(gate)}.`}
+         ${!doc ? `<br><span style="color:var(--amber)">No terms document set in Settings yet.</span>` : ""}</p>
       <div class="acts" style="margin-top:10px">
         ${j.email
           ? `<button class="btn ${sent ? "sm" : "p sm"}" onclick="A.previewEmail(${j.id})">
@@ -359,8 +358,11 @@ function slotSection(j) {
 
 function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const needs = nextS ? slotNeeded(j, nextS) : null;
+  const termsGate = nextS && termsNeeded(j, nextS);
   return `<div class="sec"><h5>Move stage</h5>
     ${gateBlocked ? `<div class="alert red"><b>Blocked.</b> ${rupee(b)} outstanding — clear it or override.</div>` : ""}
+    ${termsGate ? `<div class="alert amber"><b>The terms and booking details have to be emailed
+      before ${esc(nextS)}.</b> You'll be asked to send them.</div>` : ""}
     ${needs ? `<div class="alert amber"><b>${needs === "firm" ? "A confirmed date is needed" : "A shoot slot is needed"}
       before ${esc(nextS)}.</b> You'll be asked for it.</div>` : ""}
     <div class="acts">
@@ -570,15 +572,21 @@ function slaView() {
            ["pay_gate_stage", "Delivery blocked at"],
            ["booked_stage", "Advance and shoot slot required from"],
            ["shoot_date_from", "TBD no longer accepted from"],
-           ["email_stage", "Package email moves the job to"]].map(([k, lbl]) => `<tr>
+           ["terms_stage", "Terms email required before"]].map(([k, lbl]) => `<tr>
           <td><b>${lbl}</b></td>
           <td><select class="inp" onchange="A.setSetting('${k}',this.value)">
             ${flow().map(s => `<option ${s.name === S.settings[k] ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
           </select></td></tr>`).join("")}
       </tbody></table>
       <p class="hint">Shoot types are managed in the database — ask me to add one.</p></div>
-    <div class="panel"><h3>Package brochures</h3>
-      <p class="ph">The PDF attached to the package email, per shoot type. Paste a public link.</p>
+  </div><div>
+    <div class="panel"><h3>Terms &amp; conditions</h3>
+      <p class="ph">Attached to every terms email. Paste a public link to the PDF.</p>
+      <input class="inp" value="${esc(S.settings.terms_url || "")}" placeholder="https://…"
+        onchange="A.setSetting('terms_url',this.value)">
+      <p class="hint">Without this the email still sends, just with nothing attached.</p></div>
+    <div class="panel"><h3>Package PDFs (optional)</h3>
+      <p class="ph">Sent alongside the terms, per shoot type.</p>
       <table><tbody>
         ${S.typeRows.map(t => `<tr><td style="width:110px"><b>${esc(t.name)}</b></td>
           <td><input class="inp" value="${esc(t.brochure_url || "")}" placeholder="https://…"
@@ -587,9 +595,9 @@ function slaView() {
           <td><input class="inp" value="${esc(S.settings.brochure_url_default || "")}" placeholder="used when a type has none"
             onchange="A.setSetting('brochure_url_default',this.value)"></td></tr>
       </tbody></table></div>
-  </div><div>
-    <div class="panel"><h3>Package email</h3>
-      <p class="ph">Sent from the job drawer. {{client_name}}, {{shoot_type}} and {{price}} are filled in.</p>
+    <div class="panel"><h3>Terms email</h3>
+      <p class="ph">Sent from the job drawer before the payment link.
+        {{client_name}}, {{shoot_type}}, {{price}} and {{booking_details}} are filled in.</p>
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650">From</label>
       <input class="inp" value="${esc(S.settings.email_from || "")}" onchange="A.setSetting('email_from',this.value)">
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Replies go to</label>
