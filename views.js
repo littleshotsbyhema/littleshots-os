@@ -111,14 +111,13 @@ function dashView() {
     new Date(j.stage_entered_at) >= firstOfMonth);
   const tbd = p.filter(j => j.shoot_status === "TBD");
   const missing = p.filter(j => j.shoot_status === "Missing");
-  const lateKids = S.children.filter(c => c.state === "active" && c.sla_status === "OVERDUE");
 
   const kpi = [
     ["Shoots this week", String(week.length), today.length ? today.length + " today" : "next 7 days", false],
     ["Booked this week", String(bookedWeek.length),
       bookedWeek.length ? rupee(bookedWeek.reduce((a, j) => a + num(j.package_value), 0)) : "none yet", false],
     ["Past SLA now", String(breaches().length), breaches().length ? "needs clearing" : "all clear", !!breaches().length],
-    ["Processes past SLA", String(lateKids.length), "video, album and frame", !!lateKids.length],
+    ["Past SLA this month", String(lateMonth.length), "entered the stage this month", !!lateMonth.length],
     ["Dates still TBD", String(tbd.length), tbd.length ? "chase the client" : "all confirmed", !!tbd.length],
     ["Outstanding", rupee(owedTotal()), owing().length + " job" + (owing().length === 1 ? "" : "s"), !!owedTotal()]
   ];
@@ -156,8 +155,6 @@ function dashView() {
   </div><div>
     <div class="panel"><h3>Where everything is</h3><p class="ph">Jobs in each stage right now.</p>
       ${barsHTML(flow().map(s => [s.name, pool().filter(j => j.stage === s.name).length]))}</div>
-    <div class="panel"><h3>Processes running</h3><p class="ph">Video, album and frame, wherever they are.</p>
-      ${barsHTML(KINDS.map(k => [k.label, liveChildren(k.key).length]))}</div>
     <div class="panel"><h3>Past SLA by pipeline</h3><p class="ph">Who needs to unblock what.</p>
       ${barsHTML(BOARDS.map(k => [MODLABEL[k], breaches(k).length]))}</div>
   </div></div>`;
@@ -184,7 +181,7 @@ function boardView(k) {
       ${late ? `<span class="tag amber">${late} past SLA</span>` : ""}
       ${ow.length ? `<span class="tag red">${rupee(owedTotal(k))} pending</span>` : ""}
       ${k === "crm" && canSee("archive") ? `<button class="archlink" onclick="A.go('archive')">
-        Archive (${archivedJobs().length + doneJobs().length})</button>` : ""}</div>
+        Archive (${archivedJobs().length})</button>` : ""}</div>
     <p class="sub">${boardSub(k)}</p>${money}${lock}${sla}
     ${(ROWS[k] || [{ main: true }]).map(r => r.main
         ? `<div class="board">${stages.map(st => colHTML(k, st)).join("")}</div>`
@@ -360,9 +357,7 @@ function jobBody(j, notes, acts) {
 
   const payBanner = owes(j)
     ? `<div class="alert red"><b>${rupee(b)} still owed.</b> Flag before any file leaves.</div>` : "";
-  const slaBanner = j.archived_at
-    ? `<div class="alert grey"><b>Closed and archived.</b> Delivered ${when(j.delivered_at)}.</div>`
-    : j.sla_status === "OVERDUE"
+  const slaBanner = j.sla_status === "OVERDUE"
     ? `<div class="alert red"><b>SLA breached.</b> ${j.days_in_stage} days in ${esc(j.stage)}, target ${j.sla_days}.</div>`
     : j.sla_status === "Due today" ? `<div class="alert amber"><b>Due today.</b> Day ${j.days_in_stage} of ${j.sla_days}.</div>`
     : j.sla_status === "No SLA" ? `<div class="alert grey"><b>Parked.</b> No SLA runs on ${esc(j.stage)}.</div>`
@@ -448,7 +443,8 @@ function slotSection(j) {
         <div class="acts" style="margin-top:10px">
           <button class="btn sm" onclick="A.setShoot(${j.id})">Set a date anyway</button></div></div></div>`;
   }
-  const mustBeFirm = j.stage_no >= ordOf("shoot_date_from");
+  const firm = ordOf("shoot_date_from");
+  const mustBeFirm = j.stage_no >= firm;
   if (j.shoot_at) {
     const soon = j.days_to_shoot <= 2;
     return `<div class="sec"><h5>Shoot slot</h5>
@@ -760,7 +756,7 @@ function lifeView() {
     ["Value booked", rupee(value), ""],
     ["Collected", rupee(collected), ""],
     ["Outstanding", rupee(owedTotal()), owedTotal() ? "dn" : ""],
-    ["Jobs closed", String(doneJobs().length), ""]
+    ["Archived leads", String(archivedJobs().length), ""]
   ];
   return `<div class="head"><h1>Marketing</h1>${locTag()}<span class="tag">live from your jobs</span></div>
   <p class="sub">Everything here is counted from real records — no manual tracking.</p>
@@ -805,7 +801,7 @@ function slaView() {
         : S.jobs.filter(j => j.stage === s.name && j.sla_status === "OVERDUE").length;
       return `<tr><td><b>${esc(s.name)}</b>
           ${s.optional_for ? `<span class="pill blue">optional</span>` : ""}
-          ${s.track ? `<span class="pill blue">${esc(s.track)} process</span>` : ""}
+          ${s.track ? `<span class="pill blue">${esc(s.track)} track</span>` : ""}
           ${s.is_parked ? `<span class="pill">hidden from boards</span>` : ""}
           ${s.sla_agreed || s.sla_days == null ? "" : `<span class="pill amber">placeholder</span>`}</td>
         <td style="color:var(--ink-soft)">${(s.modules || []).map(m => MODLABEL[m]).join(" + ")}</td>
@@ -828,18 +824,16 @@ function slaView() {
            ["gallery_stage", "Shoot handover required before"],
            ["selection_stage", "Gallery link required before"],
            ["qc_stage", "Edited count and link required before"],
-           ["digital_stage", "Album and frame start after"],
+           ["digital_stage", "Video track must be finished before"],
            ["pickup_stage", "Album and frame must be finished before"]].map(([k, lbl]) => `<tr>
           <td><b>${lbl}</b></td>
           <td><select class="inp" onchange="A.setSetting('${k}',this.value)">
             ${(k === "pay_gate_stage" ? S.stages.filter(s => !s.is_parked)
                   .sort((a, b) => a.ordinal - b.ordinal) : flow())
               .map(s => `<option ${s.name === S.settings[k] ? "selected" : ""}>${esc(s.name)}${
-                s.track ? " (" + s.track + " process)" : ""}</option>`).join("")}
+                s.track ? " (" + s.track + " track)" : ""}</option>`).join("")}
           </select></td></tr>`).join("")}
-      </tbody></table>
-      <p class="hint">Delivered jobs and delivered videos archive themselves after
-        ${esc(S.settings.archive_after_days || "15")} days.</p></div>
+      </tbody></table></div>
   </div><div>
     <div class="panel"><h3>Terms &amp; conditions</h3>
       <p class="ph">Attached to every terms email. Paste a public link to the PDF.</p>
