@@ -108,7 +108,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -265,6 +265,36 @@ function editInfoNeeded(job, to) {
   if (!crossing(job, to, "qc_stage")) return false;
   return num(job.photos_edited) <= 0 || !String(job.edited_link || "").trim();
 }
+/* the shoot's file list, and the files the client chose out of it */
+const manifestOf = job => job.file_manifest || [];
+const chosenOf = job => job.selection_files || [];
+const selectionIn = job => !!job.selection_submitted_at && !job.selection_open;
+const selectionOver = job => Math.max(0, chosenOf(job).length - num(job.edited_count));
+/* a pasted list may be commas, new lines, or one long dictated line */
+const parseFiles = t => String(t || "").split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+/* clients rarely type the extension, and case wanders */
+const fileKey = f => String(f).toLowerCase().replace(/\.[a-z0-9]+$/, "");
+/* match what was pasted against the shoot, and say what didn't land */
+function matchFiles(job, names) {
+  const list = manifestOf(job);
+  if (!list.length) return { hits: names.slice(), missed: [] };
+  const byKey = new Map(list.map(f => [fileKey(f), f]));
+  const hits = [], missed = [];
+  names.forEach(n => {
+    const hit = byKey.get(fileKey(n));
+    if (hit) { if (!hits.includes(hit)) hits.push(hit); } else missed.push(n);
+  });
+  return { hits, missed };
+}
+const selectionLink = job =>
+  location.origin + "/select.html?t=" + encodeURIComponent(job.selection_token || "");
+/* nothing gets edited until we know which files the client chose */
+function selectionNeeded(job, toStage) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked || st.track) return false;
+  const o = ordOf("selection_stage");
+  return st.ordinal > o && job.stage_no <= o && !chosenOf(job).length;
+}
 /* a child process that has not finished, and is holding the job back */
 function childBlocking2(job, toStage) {
   if (!crossing(job, toStage, "pickup_stage")) return null;
@@ -292,7 +322,7 @@ const childPayGate = (job, toStep) =>
 function handoverGaps(job) {
   const g = [];
   if (!String(job.backup_location || "").trim()) g.push("where the shoot was backed up");
-  if (num(job.files_shot) <= 0) g.push("how many files were taken");
+  if (!manifestOf(job).length && num(job.files_shot) <= 0) g.push("the list of files from the shoot");
   if (bal(job) > 0) g.push("the payment collected at the shoot");
   return g;
 }
@@ -563,6 +593,7 @@ const A = {
     if (slotNeeded(j, to)) return A.setShoot(id, to);
     if (handoverNeeded(j, to)) return A.handover(id, to);
     if (galleryLinkNeeded(j, to)) return A.setGallery(id, to);
+    if (selectionNeeded(j, to)) return A.setSelection(id, to);
     if (editInfoNeeded(j, to)) return A.setEdit(id, to);
     /* the physical work hands the job over itself, and closes itself off.
        The database checks it is finished and says so if it is not. */
@@ -615,7 +646,8 @@ const A = {
     modal(`<h3>Edited files</h3>
       <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
       <label>How many files were edited?</label>
-      <input class="inp" id="edCount" type="number" min="1" value="${num(j.photos_edited) || ""}"
+      <input class="inp" id="edCount" type="number" min="1"
+        value="${num(j.photos_edited) || chosenOf(j).length || ""}"
         placeholder="${num(j.edited_count) ? num(j.edited_count) + " were promised" : "e.g. 80"}">
       <label style="margin-top:10px">Pixieset link for the edited files</label>
       <input class="inp" id="edLink" value="${esc(j.edited_link || "")}"
@@ -635,6 +667,81 @@ const A = {
     const f = { photos_edited: n, edited_link: link };
     if (thenStage) f.stage = thenStage;
     await patch(id, f, thenStage ? n + " files · moved to " + thenStage : "Edited files recorded");
+  },
+
+  /* ---- the client's own selection ---- */
+  async copySelectionLink(id) {
+    const j = S.jobs.find(x => x.id === id);
+    const msg = "Hi " + j.client_name + ", your gallery is ready. Please pick the photos you'd " +
+      "like edited here and send them in when you're done:\n" + selectionLink(j);
+    try {
+      await navigator.clipboard.writeText(msg);
+      toast("Message copied — paste it into the group");
+    } catch (e) {
+      A.showSelectionLink(id);
+    }
+  },
+  showSelectionLink(id) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>The client's link</h3><p class="mh">${esc(j.client_name)}</p>
+      <textarea style="min-height:90px" onclick="this.select()">${esc(selectionLink(j))}</textarea>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn" onclick="A.closeModal()">Done</button></div>
+      <p class="hint">Copy this into the WhatsApp group. It stops working once they send their picks.</p>`);
+  },
+  mailSelectionLink(id) {
+    const j = S.jobs.find(x => x.id === id);
+    const body = "Hi " + j.client_name + ",\n\nYour gallery is ready. Please pick the photos " +
+      "you'd like edited here:\n\n" + selectionLink(j) +
+      "\n\nYour package includes " + num(j.edited_count) + " edited photos." +
+      "\n\nLittle Shots by Hema";
+    location.href = "mailto:" + encodeURIComponent(j.email || "") +
+      "?subject=" + encodeURIComponent("Choose your photos — " + j.shoot_type) +
+      "&body=" + encodeURIComponent(body);
+  },
+  /* the client sent their picks some other way, or changed their mind on the phone */
+  setSelection(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const held = manifestOf(j).length;
+    modal(`<h3>The client's selection</h3>
+      <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>Which files did they choose?</label>
+      <textarea id="selBox" style="min-height:130px"
+        placeholder="IMG_1234, IMG_1240, IMG_1255…">${esc(chosenOf(j).join("\n"))}</textarea>
+      <div id="selMsg"></div>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveSelection(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and move" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">${held
+        ? "Checked against the " + held + " files from the shoot, so a typo won't slip through."
+        : "No file list was recorded for this shoot, so these are taken as typed."}
+        The package promises ${num(j.edited_count)} edited photos.</p>`);
+  },
+  async saveSelection(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const names = parseFiles($("selBox").value);
+    if (!names.length) return toast("Paste the files the client chose", true);
+    const { hits, missed } = matchFiles(j, names);
+    if (missed.length) {
+      $("selMsg").innerHTML = `<div class="alert red" style="margin:11px 0 0">
+        <b>${missed.length} of those aren't in this shoot:</b> ${esc(missed.slice(0, 10).join(", "))}${
+        missed.length > 10 ? "…" : ""}. Fix them, or take them out.</div>`;
+      return;
+    }
+    A.closeModal();
+    const over = Math.max(0, hits.length - num(j.edited_count));
+    const f = { selection_files: hits, selection_submitted_at: new Date().toISOString(),
+                selection_open: false };
+    if (thenStage) f.stage = thenStage;
+    await patch(id, f, hits.length + " files recorded" +
+      (over ? " · " + over + " over the package" : "") +
+      (thenStage ? " · moved to " + thenStage : ""));
+  },
+  async reopenSelection(id) {
+    const { data, error } = await sb.rpc("reopen_selection", { p_job: id });
+    if (error) return fail(error);
+    await refresh("Link reopened — back at " + (data || "the selection stage"));
   },
 
   /* ---- child processes ---- */
@@ -708,9 +815,15 @@ const A = {
       <label>Where is the backup?</label>
       <input class="inp" id="hoBackup" value="${esc(j.backup_location || "")}"
         placeholder="e.g. Studio HDD 3 + Google Drive">
-      <label style="margin-top:10px">How many files were taken?</label>
-      <input class="inp" id="hoFiles" type="number" min="1" value="${num(j.files_shot) || ""}"
-        placeholder="e.g. 840">
+      <label style="margin-top:10px">Paste the file names from the shoot</label>
+      <textarea id="hoList" style="min-height:110px" oninput="A.hoCount()"
+        placeholder="IMG_1001.jpg, IMG_1002.jpg, IMG_1003.jpg&#10;— straight out of Finder, Explorer or Lightroom">${esc(manifestOf(j).join("\n"))}</textarea>
+      <p class="hint" id="hoTally" style="margin-top:6px"></p>
+      <div id="hoCountBox" style="margin-top:10px">
+        <label>… or just how many were taken</label>
+        <input class="inp" id="hoFiles" type="number" min="1" value="${num(j.files_shot) || ""}"
+          placeholder="e.g. 840">
+      </div>
       ${thenStage ? (b > 0
         ? `<label style="margin-top:10px">Payment collected (required)</label>
            <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
@@ -722,25 +835,35 @@ const A = {
         <button class="btn p" onclick="A.saveHandover(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and move" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
-      <p class="hint">The client's gallery becomes shareable from ${esc(S.settings.share_from_stage || "")},
-        so the backup has to be safe first.</p>`);
+      <p class="hint">The file names are what the client picks from, so paste them if you can —
+        a bare count still works, but then nothing they send can be checked.</p>`);
+    A.hoCount();
+  },
+  /* the pasted list speaks for how many files were taken */
+  hoCount() {
+    const box = $("hoList"), tally = $("hoTally"), countBox = $("hoCountBox");
+    if (!box || !tally) return;
+    const n = parseFiles(box.value).length;
+    tally.textContent = n ? n + " file" + (n === 1 ? "" : "s") + " pasted" : "";
+    if (countBox) countBox.style.display = n ? "none" : "";
   },
   async saveHandover(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
     const backup = $("hoBackup").value.trim();
-    const files = parseInt($("hoFiles").value || "0", 10) || 0;
+    const manifest = parseFiles($("hoList").value);
+    const files = manifest.length || (parseInt($("hoFiles").value || "0", 10) || 0);
     const payEl = $("hoPay");
     const pay = payEl ? (parseFloat(payEl.value || "0") || 0) : 0;
     const b = bal(j);
 
     if (!backup) return toast("Say where the shoot was backed up", true);
-    if (files <= 0) return toast("Enter how many files were taken", true);
+    if (files <= 0) return toast("Paste the file names, or enter how many were taken", true);
     if (thenStage && b > 0) {
       if (pay <= 0) return toast("Record the payment collected at the shoot", true);
       if (pay > b) return toast("That is more than the " + rupee(b) + " outstanding", true);
     }
     A.closeModal();
-    const f = { backup_location: backup, files_shot: files };
+    const f = { backup_location: backup, files_shot: files, file_manifest: manifest };
     if (thenStage) f.stage = thenStage;
     if (pay > 0) f.amount_received = num(j.amount_received) + pay;
     await patch(id, f, thenStage
