@@ -40,6 +40,9 @@ input,select,textarea{font:inherit;color:inherit}
 .tag.green{background:var(--green-soft);color:var(--green)}
 .tag.grey{background:var(--grey-soft);color:var(--ink-soft)}
 .sub{color:var(--ink-soft);font-size:13px;margin:3px 0 14px}
+.archlink{font-size:12px;font-weight:600;color:var(--rose);text-decoration:underline;
+          text-underline-offset:3px;padding:2px 0;margin-left:2px}
+.archlink:hover{color:#8f3757}
 
 /* ---------------- boards ---------------- */
 .board{display:flex;gap:12px;overflow-x:auto;padding-bottom:14px}
