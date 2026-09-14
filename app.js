@@ -306,7 +306,7 @@ const A = {
           ${thenStage ? "Send and move to " + esc(thenStage) : "Send it"}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">Edit the wording in Settings. It is sent from
-        ${esc((S.settings.email_from || "").replace(/.*</, "").replace(/>.*/, "") || "the studio address")}.</p>`);
+        ${esc(data.sender || (S.settings.email_from || "").replace(/.*</, "").replace(/>.*/, "") || "the studio address")}.</p>`);
   },
   async sendEmail(id, thenStage) {
     const btn = $("sendBtn");
@@ -318,6 +318,12 @@ const A = {
       return fail(error || new Error(data.error));
     }
     A.closeModal();
+    /* the email can go out and the move still fail — never let that pass quietly */
+    if (thenStage && !data.moved) {
+      await refresh();
+      return fail(new Error("Emailed " + data.to + ", but the job did not move to " +
+        thenStage + (data.move_error ? ": " + data.move_error : ". Try the move again.")));
+    }
     await refresh("Emailed " + data.to + (data.moved ? " · moved to " + data.stage : ""));
   },
   async setBrochure(name, url) {
