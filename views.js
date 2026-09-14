@@ -129,7 +129,7 @@ function dashView() {
     days += `<tr style="cursor:pointer" onclick="A.openJob(${j.id})">
       <td><b>${new Date(j.shoot_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</b></td>
       <td><b>${esc(j.client_name)}</b><br><span style="color:var(--ink-soft)">${esc(j.shoot_type)}</span></td>
-      <td>${esc(j.location)}</td>
+      <td>${esc(j.venue && j.venue !== "Studio" ? j.venue + " · " + j.location : j.location)}</td>
       <td>${esc(j.owner_name || "unassigned")}<br>
         <span class="pill ${slaPill(j)}">${esc(j.stage)}</span></td></tr>`;
   });
@@ -147,7 +147,7 @@ function dashView() {
   <div class="grid2"><div>
     <div class="panel"><h3>Upcoming shoots · next 7 days</h3>
       <p class="ph">Click a row to open the job.</p>
-      ${week.length ? `<table><thead><tr><th>Time</th><th>Client</th><th>Location</th><th>Who / stage</th></tr></thead>
+      ${week.length ? `<table><thead><tr><th>Time</th><th>Client</th><th>Where</th><th>Who / stage</th></tr></thead>
         <tbody>${days}</tbody></table>`
         : `<div class="empty">Nothing scheduled in the next 7 days</div>`}
       ${tbd.length ? `<p class="hint">${tbd.length} more booked ${tbd.length === 1 ? "job is" : "jobs are"} waiting on the client to fix a date.</p>` : ""}
@@ -184,13 +184,14 @@ function boardView(k) {
         Archive (${archivedJobs().length})</button>` : ""}</div>
     <p class="sub">${boardSub(k)}</p>${money}${lock}${sla}
     <div class="board">${stages.map(st => colHTML(k, st)).join("")}</div>
+    ${trackBoards(k)}
     <p class="hint">Card edge shows SLA state. ₹ means money is owed; a black ⤓ strip means the client's link must stay view-only.</p>`;
 }
 function boardSub(k) {
   return {
     crm: "Every enquiry from first message to signed booking.",
     prod: "Booked jobs through the shoot to the client's gallery.",
-    post: "Client selection, editing and quality control.",
+    post: "Client selection, editing and quality control — with the video moving in parallel.",
     del: "Album, frame, pickup and handover."
   }[k] || "";
 }
@@ -208,12 +209,57 @@ function colHTML(k, st) {
     <div class="col-body">${list.length ? list.map(cardHTML).join("")
       : `<div class="empty">Nothing here</div>`}</div></div>`;
 }
+
+/* the side tracks that belong to this module, each as its own little board */
+function trackBoards(k) {
+  return modTracks(k).map(t => {
+    const steps = trackSteps(t.key).filter(s => (s.modules || []).includes(k));
+    const live = pool().filter(j => trackRuns(j, t.key) && trackOf(j, t.key) &&
+      trackOf(j, t.key) !== "Done");
+    return `<div class="trackwrap">
+      <div class="trackhead">${{ video: "▶", album: "▣", frame: "▢" }[t.key] || "•"}
+        ${esc(t.label)} track
+        <span class="tag grey">${live.length} running</span>
+        <small>runs alongside — it does not hold the main line up, but
+          ${esc(t.key === "video" ? S.settings.digital_stage || "Digital Files Delivery"
+                                  : S.settings.pickup_stage || "Waiting for Client Pickup")}
+          waits for it</small></div>
+      <div class="board">${steps.map(st => trackColHTML(t, st)).join("")}</div></div>`;
+  }).join("");
+}
+function trackColHTML(t, st) {
+  const list = pool().filter(j => trackRuns(j, t.key) && trackOf(j, t.key) === st.name)
+    .sort((a, b) => trackDays(b, t.key) - trackDays(a, t.key));
+  return `<div class="col track">
+    <div class="col-h"><div class="r1"><span class="name">${esc(st.name)}</span>
+      <span class="n">${list.length}</span></div>
+      <div class="sla">${st.sla_days == null ? "No SLA" : "SLA " + st.sla_days + "d · " + esc(st.responsible)}</div>
+    </div>
+    <div class="col-body">${list.length ? list.map(j => trackCardHTML(j, t)).join("")
+      : `<div class="empty">Nothing here</div>`}</div></div>`;
+}
+function trackCardHTML(j, t) {
+  const status = trackSla(j, t.key);
+  const cls = { OVERDUE: "late", "Due today": "due", "On track": "ok" }[status] || "";
+  const pill = { OVERDUE: "red", "Due today": "amber" }[status] || "";
+  const st = stageByName(trackOf(j, t.key)) || {};
+  return `<button class="card ${cls}" onclick="A.openJob(${j.id})">
+    <div class="cn">${esc(j.client_name)}</div>
+    <div class="cm">${esc(j.shoot_type)} · main line at ${esc(j.stage)}</div>
+    <div class="row">
+      <span class="pill ${pill}">${status === "No SLA" ? "no SLA"
+        : status === "OVERDUE" ? (trackDays(j, t.key) - st.sla_days) + "d over"
+        : status === "Due today" ? "due today"
+        : trackDays(j, t.key) + "/" + st.sla_days + "d"}</span>
+      ${owes(j) ? `<span class="pill red">${rupee(bal(j))} owed</span>` : ""}
+      <span class="av">${ini(j.owner_name)}</span></div></button>`;
+}
 function cardHTML(j) {
   const soon = j.shoot_at && j.days_to_shoot <= 2;
   return `<button class="card ${slaClass(j)} ${owes(j) ? "owes" : ""}" onclick="A.openJob(${j.id})">
     <div class="cn">${esc(j.client_name)}</div>
     <div class="cm">${esc(j.shoot_type)}</div>
-    <div class="loc">◎ ${esc(j.location)}</div>
+    <div class="loc">◎ ${esc(j.location)}${j.venue && j.venue !== "Studio" ? " · " + esc(j.venue) : ""}</div>
     ${j.shoot_at ? `<div class="shootbar ${soon ? "soon" : "set"}">◷ ${esc(fmtShoot(j.shoot_at))}${isToday(j.shoot_at) ? " · TODAY" : ""}</div>`
       : j.shoot_status === "TBD" ? `<div class="shootbar tbd">◷ DATE TBD</div>`
       : j.shoot_status === "Missing" ? `<div class="owebar">◷ NO SHOOT SLOT</div>` : ""}
@@ -222,9 +268,8 @@ function cardHTML(j) {
       : j.file_access === "Downloads unlocked" ? `<div class="okbar">⤓ Download unlocked</div>` : ""}
     <div class="row">
       <span class="pill ${slaPill(j)}">${slaText(j)}</span>
-      ${j.has_video ? `<span class="pill blue">▶ video</span>` : ""}
-      ${j.has_album ? `<span class="pill blue">▣ album</span>` : ""}
-      ${j.frame_included ? `<span class="pill blue">▢ frame</span>` : ""}
+      ${TRACKS.filter(t => trackRuns(j, t.key) && trackOf(j, t.key) && trackOf(j, t.key) !== "Done")
+        .map(t => `<span class="pill blue">${{ video: "▶", album: "▣", frame: "▢" }[t.key]} ${esc(trackOf(j, t.key))}</span>`).join("")}
       ${num(j.package_value) ? `<span class="pill">${rupee(j.package_value)}</span>` : ""}
       <span class="av">${ini(j.owner_name)}</span></div></button>`;
 }
@@ -287,6 +332,8 @@ function jobBody(j, notes, acts) {
     ${emailSection(j)}
     ${slotSection(j)}
     ${handoverSection(j)}
+    ${tracksSection(j)}
+    ${linksSection(j)}
     ${moveSection(j, nextS, prevS, gateBlocked, gate, b, parked)}
     ${paySection(j, b, gate)}
     ${accessSection(j, b)}
@@ -366,7 +413,8 @@ function slotSection(j) {
       <div class="slot set"><h6>◷ ${esc(fmtShoot(j.shoot_at))}</h6>
         <p>${isToday(j.shoot_at) ? "Today." : j.days_to_shoot < 0 ? "Already happened."
             : "In " + j.days_to_shoot + " day" + (j.days_to_shoot === 1 ? "" : "s") + "."}
-           ${soon && j.days_to_shoot >= 0 ? " Confirm with the client." : ""}</p>
+           ${soon && j.days_to_shoot >= 0 ? " Confirm with the client." : ""}
+           ${j.venue && j.venue !== "Studio" ? "<br><b>" + esc(j.venue) + "</b> · " + esc(j.venue_address || "no address yet") : ""}</p>
         <div class="acts" style="margin-top:10px">
           <button class="btn sm" onclick="A.setShoot(${j.id})">Change date &amp; time</button></div></div></div>`;
   }
@@ -405,12 +453,73 @@ function handoverSection(j) {
     </div></div>`;
 }
 
+/* video, album and frame — each moving at its own pace */
+function tracksSection(j) {
+  const live = TRACKS.filter(t => trackRuns(j, t.key));
+  if (archived(j) || !live.length) return "";
+  return `<div class="sec"><h5>Side tracks</h5>${live.map(t => {
+    const at = trackOf(j, t.key), done = at === "Done";
+    const next = trackNext(j, t.key), prev = trackPrev(j, t.key);
+    const blocked = next && trackPayGate(j, next);
+    const status = at && !done ? trackSla(j, t.key) : null;
+    const gateStage = t.key === "video" ? (S.settings.digital_stage || "Digital Files Delivery")
+                                        : (S.settings.pickup_stage || "Waiting for Client Pickup");
+    return `<div class="trackrow ${done ? "done" : ""}">
+      <div class="tr1"><b>${esc(t.label)}</b>
+        <span class="pill ${done ? "green" : status === "OVERDUE" ? "red"
+          : status === "Due today" ? "amber" : ""}">${done ? "✓ finished"
+          : at ? esc(at) : "not started"}</span>
+        ${at && !done && trackDays(j, t.key) ? `<span class="trd">day ${trackDays(j, t.key)}</span>` : ""}</div>
+      ${blocked ? `<div class="alert red" style="margin:8px 0 0">
+        <b>${rupee(bal(j))} outstanding.</b> ${esc(next)} is blocked until it clears.</div>` : ""}
+      <div class="acts" style="margin-top:8px">
+        <button class="btn sm" onclick="A.moveTrack(${j.id},'${t.key}','${esc(prev || "")}')"
+          ${prev ? "" : "disabled"}>←</button>
+        <button class="btn ${blocked ? "" : "p"} sm"
+          onclick="A.moveTrack(${j.id},'${t.key}',${next ? `'${esc(next)}'` : "null"})"
+          ${next && !blocked ? "" : "disabled"}>${next ? (next === "Done" ? "Mark finished"
+            : esc(next) + " →") : "Finished"}</button>
+        ${blocked ? `<button class="btn warn sm"
+          onclick="A.moveTrack(${j.id},'${t.key}','${esc(next)}',true)">Override</button>` : ""}
+      </div>
+      ${done ? "" : `<p class="hint" style="margin-top:6px">${esc(gateStage)} waits for this.</p>`}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+/* every link the client has been given */
+function linksSection(j) {
+  const rows = [
+    ["Selection gallery", j.gallery_link, "gallery_link"],
+    ["Edited photos", j.edited_link, "edited_link"],
+    ["Edited video", j.has_video ? j.video_link : null, "video_link"]
+  ].filter(r => r[1] || (r[2] === "gallery_link" && j.stage_no >= ordOf("selection_stage")));
+  if (archived(j) || !rows.length) return "";
+  return `<div class="sec"><h5>Pixieset links</h5><dl class="kv">
+    ${rows.map(([label, link]) => `<dt>${label}</dt><dd>${link
+      ? `<a href="${esc(link)}" target="_blank" rel="noreferrer noopener"
+           style="color:var(--rose);font-weight:600;word-break:break-all">${esc(link)}</a>`
+      : `<span style="color:var(--ink-soft)">not shared yet</span>`}</dd>`).join("")}
+  </dl>
+  ${num(j.photos_edited) ? `<p class="hint">${j.photos_edited} files edited${num(j.edited_count)
+      ? " of " + j.edited_count + " promised" : ""}.</p>` : ""}</div>`;
+}
+
 function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const needs = nextS ? slotNeeded(j, nextS) : null;
   const hoGaps = nextS && !needs ? handoverNeeded(j, nextS) : null;
   const pkGaps = nextS ? packageNeeded(j, nextS) : null;
   const termsGate = nextS && !pkGaps && termsNeeded(j, nextS);
+  const held = nextS ? trackBlocking(j, nextS) : null;
+  const needGallery = nextS && galleryLinkNeeded(j, nextS);
+  const needEdit = nextS && editInfoNeeded(j, nextS);
   return `<div class="sec"><h5>Move stage</h5>
+    ${held ? `<div class="alert red"><b>Held by a side track.</b> The ${esc(held)} —
+      ${esc(nextS)} waits for it.</div>` : ""}
+    ${needGallery ? `<div class="alert amber"><b>${esc(nextS)} needs the Pixieset gallery link.</b>
+      You'll be asked for it.</div>` : ""}
+    ${needEdit ? `<div class="alert amber"><b>${esc(nextS)} needs the edited file count and link.</b>
+      You'll be asked for them.</div>` : ""}
     ${gateBlocked ? `<div class="alert red"><b>Blocked.</b> ${rupee(b)} outstanding — clear it or override.</div>` : ""}
     ${pkGaps ? `<div class="alert amber"><b>${esc(nextS)} needs the package settled first.</b>
       Missing ${esc(pkGaps.join(", "))} — you'll be asked for it.</div>` : ""}
@@ -424,7 +533,7 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
       ${parked
         ? `<button class="btn p" onclick="A.moveTo(${j.id},'${esc(flow()[0].name)}')">Restore to ${esc(flow()[0].name)}</button>`
         : `<button class="btn" onclick="A.moveTo(${j.id},${prevS ? `'${esc(prevS)}'` : "null"})" ${prevS ? "" : "disabled"}>← ${esc(prevS || "Back")}</button>
-           <button class="btn ${gateBlocked ? "" : "p"}" onclick="A.moveTo(${j.id},${nextS ? `'${esc(nextS)}'` : "null"})" ${!nextS || gateBlocked ? "disabled" : ""}>
+           <button class="btn ${gateBlocked || held ? "" : "p"}" onclick="A.moveTo(${j.id},${nextS ? `'${esc(nextS)}'` : "null"})" ${!nextS || gateBlocked || held ? "disabled" : ""}>
              ${nextS ? esc(nextS) + " →" : "Final stage"}</button>
            ${gateBlocked ? `<button class="btn warn" onclick="A.moveTo(${j.id},'${esc(nextS)}',true)">Override &amp; deliver</button>` : ""}
            ${parkedStage() ? `<button class="btn" onclick="A.moveTo(${j.id},'${esc(parkedStage())}')">Archive</button>` : ""}`}
@@ -445,7 +554,7 @@ function paySection(j, b, gate) {
         : ""}
         <button class="btn sm" onclick="A.editPackage(${j.id})">Edit package &amp; delivery</button>
       </div></div>
-    ${b > 0 ? `<p class="hint">Cannot reach ${esc(gate || "")} until this clears.</p>` : ""}</div>`;
+    ${b > 0 ? `<p class="hint">${esc(gate || "")} is blocked until this clears.</p>` : ""}</div>`;
 }
 
 function accessSection(j, b) {
@@ -479,6 +588,8 @@ function detailSection(j) {
     <dt>Shoot type</dt><dd><select class="inp" onchange="A.setType(${j.id},this.value)">
       ${typeOptions(j.shoot_type)}</select></dd>
     <dt>Source</dt><dd>${esc(j.source || "—")}</dd>
+    <dt>Venue</dt><dd>${esc(j.venue || "Studio")}${j.venue_address
+      ? '<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px">' + esc(j.venue_address) + "</div>" : ""}</dd>
     <dt>Deliverables</dt><dd>${[
         num(j.edited_count) ? j.edited_count + " edited photos" : "photos",
         j.unedited_included ? "unedited included" : null,
@@ -596,6 +707,8 @@ function lifeView() {
   </div><div>
     <div class="panel"><h3>Jobs by location</h3><p class="ph">Whole pipeline.</p>
       ${barsHTML(LOCATIONS.map(l => [l, S.jobs.filter(j => j.location === l).length]))}</div>
+    <div class="panel"><h3>Where the shoots happen</h3><p class="ph">Studio, home or on location.</p>
+      ${barsHTML(VENUES.map(v => [v, S.jobs.filter(j => (j.venue || "Studio") === v).length]))}</div>
     <div class="panel"><h3>Sales funnel</h3><p class="ph">How many have reached each Sales stage or beyond.</p>
       ${barsHTML(funnel)}</div>
     <div class="panel"><h3>Deliverables mix</h3><p class="ph">What clients are actually buying.</p>
@@ -617,10 +730,13 @@ function slaView() {
       <b>${S.settings.alerts_active === "true" ? "on" : "off"}</b>.</p>
     <table><thead><tr><th>Stage</th><th>Pipeline</th><th>Responsible</th><th style="width:120px">SLA (days)</th><th style="width:110px">Here now</th></tr></thead><tbody>
     ${S.stages.map(s => {
-      const here = S.jobs.filter(j => j.stage === s.name).length;
-      const late = S.jobs.filter(j => j.stage === s.name && j.sla_status === "OVERDUE").length;
+      const here = s.track
+        ? S.jobs.filter(j => trackOf(j, s.track) === s.name).length
+        : S.jobs.filter(j => j.stage === s.name).length;
+      const late = s.track ? 0 : S.jobs.filter(j => j.stage === s.name && j.sla_status === "OVERDUE").length;
       return `<tr><td><b>${esc(s.name)}</b>
           ${s.optional_for ? `<span class="pill blue">optional</span>` : ""}
+          ${s.track ? `<span class="pill blue">${esc(s.track)} track</span>` : ""}
           ${s.is_parked ? `<span class="pill">hidden from boards</span>` : ""}
           ${s.sla_agreed || s.sla_days == null ? "" : `<span class="pill amber">placeholder</span>`}</td>
         <td style="color:var(--ink-soft)">${(s.modules || []).map(m => MODLABEL[m]).join(" + ")}</td>
@@ -636,14 +752,21 @@ function slaView() {
       <table><tbody>
         ${[["owed_from_stage", "Money counts as owed from"],
            ["share_from_stage", "Client can see files from"],
-           ["pay_gate_stage", "Delivery blocked at"],
+           ["pay_gate_stage", "Blocked while money is owed"],
            ["booked_stage", "Advance and shoot slot required from"],
            ["shoot_date_from", "TBD no longer accepted from"],
            ["terms_stage", "Terms email required before"],
-           ["gallery_stage", "Shoot handover required before"]].map(([k, lbl]) => `<tr>
+           ["gallery_stage", "Shoot handover required before"],
+           ["selection_stage", "Gallery link required before"],
+           ["qc_stage", "Edited count and link required before"],
+           ["digital_stage", "Video track must be finished before"],
+           ["pickup_stage", "Album and frame must be finished before"]].map(([k, lbl]) => `<tr>
           <td><b>${lbl}</b></td>
           <td><select class="inp" onchange="A.setSetting('${k}',this.value)">
-            ${flow().map(s => `<option ${s.name === S.settings[k] ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
+            ${(k === "pay_gate_stage" ? S.stages.filter(s => !s.is_parked)
+                  .sort((a, b) => a.ordinal - b.ordinal) : flow())
+              .map(s => `<option ${s.name === S.settings[k] ? "selected" : ""}>${esc(s.name)}${
+                s.track ? " (" + s.track + " track)" : ""}</option>`).join("")}
           </select></td></tr>`).join("")}
       </tbody></table>
       <p class="hint">Shoot types are managed in the database — ask me to add one.</p></div>
@@ -665,7 +788,8 @@ function slaView() {
       </tbody></table></div>
     <div class="panel"><h3>Terms email</h3>
       <p class="ph">Sent from the job drawer before the payment link.
-        {{client_name}}, {{shoot_type}}, {{price}} and {{booking_details}} are filled in.</p>
+        {{client_name}}, {{shoot_type}}, {{price}} and {{booking_details}} are filled in.
+        The balance owed is deliberately left out.</p>
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650">From</label>
       <input class="inp" value="${esc(S.settings.email_from || "")}" onchange="A.setSetting('email_from',this.value)">
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Replies go to</label>
