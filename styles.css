@@ -139,8 +139,8 @@ details.journey{border-top:1px solid var(--line);padding-top:12px}
 details.journey summary{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:#a89ca4;
                         font-weight:650;cursor:pointer;list-style:none}
 details.journey summary::-webkit-details-marker{display:none}
-details.journey summary::before{content:'\25B8 ';color:#c0b6bd}
-details.journey[open] summary::before{content:'\25BE '}
+details.journey summary::before{content:'▸ ';color:#c0b6bd}
+details.journey[open] summary::before{content:'▾ '}
 details.journey > div{margin-top:10px}
 .step{display:flex;gap:10px;align-items:flex-start;padding:4px 0;font-size:12.5px}
 .bul{width:15px;height:15px;border-radius:99px;border:2px solid var(--line);flex:0 0 15px;margin-top:2px;position:relative}
@@ -233,3 +233,8 @@ tr:last-child td{border-bottom:0}
 .modalbox p.mh{margin:0 0 16px;font-size:12.5px;color:var(--ink-soft)}
 .modalbox label{display:block;font-size:11px;font-weight:650;color:var(--ink-soft);margin:10px 0 4px}
 .f2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.modalbox label.chk{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;
+                    color:var(--ink);text-transform:none;letter-spacing:0;margin:0;cursor:pointer}
+.modalbox label.chk input{width:15px;height:15px;accent-color:var(--rose);margin:0;cursor:pointer}
+.modalbox .sec{margin:0}
+.modalbox .sec h5{margin:0 0 8px}
