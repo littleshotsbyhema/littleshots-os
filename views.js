@@ -222,6 +222,7 @@ function cardHTML(j) {
       <span class="pill ${slaPill(j)}">${slaText(j)}</span>
       ${j.has_video ? `<span class="pill blue">▶ video</span>` : ""}
       ${j.has_album ? `<span class="pill blue">▣ album</span>` : ""}
+      ${j.frame_included ? `<span class="pill blue">▢ frame</span>` : ""}
       ${num(j.package_value) ? `<span class="pill">${rupee(j.package_value)}</span>` : ""}
       <span class="av">${ini(j.owner_name)}</span></div></button>`;
 }
@@ -279,6 +280,7 @@ function jobBody(j, notes, acts) {
 
   return payBanner + slaBanner + `
     ${notesSection(j, notes)}
+    ${packageSection(j)}
     ${emailSection(j)}
     ${slotSection(j)}
     ${moveSection(j, nextS, prevS, gateBlocked, gate, b, parked)}
@@ -297,6 +299,29 @@ function notesSection(j, notes) {
       : notes.length ? notes.map(n => `<div class="noteitem">${esc(n.body)}
           <div class="m">${esc(nameOf(n.author_id))} · ${when(n.created_at)}</div></div>`).join("")
       : `<div class="empty">No notes yet</div>`}</div>`;
+}
+
+function packageSection(j) {
+  const gaps = packageGaps(j), done = !gaps.length;
+  const row = (label, value, on) => `<div class="payrow">
+    <span>${label}</span><b style="${on ? "" : "color:var(--ink-soft);font-weight:600"}">${value}</b></div>`;
+  const missing = `<span style="color:var(--red)">not set</span>`;
+  return `<div class="sec"><h5>Package &amp; delivery details</h5>
+    <div class="paybox ${done ? "" : "owes"}">
+      ${row("Total package value", num(j.package_value) ? "<b>" + rupee(j.package_value) + "</b>" : missing, num(j.package_value))}
+      ${row("Edited photos", num(j.edited_count) ? j.edited_count + " photos" : missing, num(j.edited_count))}
+      ${row("Unedited photos", j.unedited_included ? "included" : "not included", j.unedited_included)}
+      ${row("Video", j.has_video ? (esc(j.video_notes || "") || missing) : "not included", j.has_video)}
+      ${row("Album", j.has_album
+        ? ((esc(j.album_size || "") || missing) + (num(j.album_sheets) ? " · " + j.album_sheets + " sheets" : " · " + missing))
+        : "not included", j.has_album)}
+      ${row("Frame", j.frame_included ? (esc(j.frame_size || "") || missing) : "not included", j.frame_included)}
+      <div class="acts" style="margin-top:11px">
+        <button class="btn ${done ? "sm" : "p sm"}" onclick="A.editPackage(${j.id})">
+          ${done ? "Edit details" : "Fill these in"}</button></div>
+    </div>
+    ${done ? "" : `<p class="hint" style="color:var(--amber)">Still missing ${gaps.join(", ")}.
+      All of it is needed before ${esc(S.settings.terms_stage || "Payment Link Shared")}.</p>`}</div>`;
 }
 
 function emailSection(j) {
@@ -358,9 +383,12 @@ function slotSection(j) {
 
 function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const needs = nextS ? slotNeeded(j, nextS) : null;
-  const termsGate = nextS && termsNeeded(j, nextS);
+  const pkGaps = nextS ? packageNeeded(j, nextS) : null;
+  const termsGate = nextS && !pkGaps && termsNeeded(j, nextS);
   return `<div class="sec"><h5>Move stage</h5>
     ${gateBlocked ? `<div class="alert red"><b>Blocked.</b> ${rupee(b)} outstanding — clear it or override.</div>` : ""}
+    ${pkGaps ? `<div class="alert amber"><b>${esc(nextS)} needs the package settled first.</b>
+      Missing ${esc(pkGaps.join(", "))} — you'll be asked for it.</div>` : ""}
     ${termsGate ? `<div class="alert amber"><b>The terms and booking details have to be emailed
       before ${esc(nextS)}.</b> You'll be asked to send them.</div>` : ""}
     ${needs ? `<div class="alert amber"><b>${needs === "firm" ? "A confirmed date is needed" : "A shoot slot is needed"}
@@ -387,7 +415,8 @@ function paySection(j, b, gate) {
         ${b > 0 ? `<input class="inp" id="payBox" style="width:110px" type="number" min="1" max="${b}" placeholder="Amount">
           <button class="btn p" onclick="A.recordPay(${j.id})">Record payment</button>
           <button class="btn sm" onclick="A.recordPay(${j.id},${b})">Mark fully paid</button>`
-        : `<button class="btn sm" onclick="A.editMoney(${j.id})">Edit package value</button>`}
+        : ""}
+        <button class="btn sm" onclick="A.editPackage(${j.id})">Edit package &amp; delivery</button>
       </div></div>
     ${b > 0 ? `<p class="hint">Cannot reach ${esc(gate || "")} until this clears.</p>` : ""}</div>`;
 }
@@ -421,10 +450,14 @@ function detailSection(j) {
     <dt>Shoot type</dt><dd><select class="inp" onchange="A.setType(${j.id},this.value)">
       ${typeOptions(j.shoot_type)}</select></dd>
     <dt>Source</dt><dd>${esc(j.source || "—")}</dd>
-    <dt>Deliverables</dt><dd>Photos${j.has_video ? " + video" : ""}${j.has_album ? " + album" : ""}${!j.has_video && !j.has_album ? " only (digital)" : ""}
-      <div class="acts" style="margin-top:6px">
-        <button class="btn sm" onclick="A.toggleDeliv(${j.id},'video')">${j.has_video ? "Remove video" : "Add video"}</button>
-        <button class="btn sm" onclick="A.toggleDeliv(${j.id},'album')">${j.has_album ? "Remove album" : "Add album"}</button></div></dd>
+    <dt>Deliverables</dt><dd>${[
+        num(j.edited_count) ? j.edited_count + " edited photos" : "photos",
+        j.unedited_included ? "unedited included" : null,
+        j.has_video ? "video" : null,
+        j.has_album ? "album" + (j.album_size ? " " + esc(j.album_size) : "") : null,
+        j.frame_included ? "frame" + (j.frame_size ? " " + esc(j.frame_size) : "") : null
+      ].filter(Boolean).join(" · ")}
+      <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">set in Package &amp; delivery details above</div></dd>
     <dt>Days in stage</dt><dd>${j.days_in_stage}${j.sla_days == null ? " · no SLA" : " of " + j.sla_days + " allowed"}</dd>
     <dt>Stage owner</dt><dd>${esc(j.stage_responsible)}</dd>
     <dt>Assigned to</dt><dd><select class="inp" onchange="A.reassign(${j.id},this.value)">
@@ -533,10 +566,12 @@ function lifeView() {
       ${barsHTML(LOCATIONS.map(l => [l, S.jobs.filter(j => j.location === l).length]))}</div>
     <div class="panel"><h3>Pipeline funnel</h3><p class="ph">How many have reached each CRM stage or beyond.</p>
       ${barsHTML(funnel)}</div>
-    <div class="panel"><h3>Deliverables mix</h3><p class="ph">Photos, album and video.</p>
-      ${barsHTML([["Photos only", p.filter(j => !j.has_video && !j.has_album).length],
+    <div class="panel"><h3>Deliverables mix</h3><p class="ph">What clients are actually buying.</p>
+      ${barsHTML([["Photos only", p.filter(j => !j.has_video && !j.has_album && !j.frame_included).length],
                   ["With album", p.filter(j => j.has_album).length],
-                  ["With video", p.filter(j => j.has_video).length]])}</div>
+                  ["With video", p.filter(j => j.has_video).length],
+                  ["With frame", p.filter(j => j.frame_included).length],
+                  ["Unedited included", p.filter(j => j.unedited_included).length]])}</div>
   </div></div>
   <p class="hint">Lifecycle campaigns (100 days, sitter, cake smash, festivals) come next — they need a date of birth on each job.</p>`;
 }
