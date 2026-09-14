@@ -60,7 +60,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -157,6 +157,21 @@ function packageNeeded(job, toStage) {
   if (!st || st.is_parked) return null;
   if (!(st.ordinal >= ordOf("terms_stage") && job.stage_no < ordOf("terms_stage"))) return null;
   const g = packageGaps(job);
+  return g.length ? g : null;
+}
+/* what the photographer still owes the studio before the gallery goes out */
+function handoverGaps(job) {
+  const g = [];
+  if (!String(job.backup_location || "").trim()) g.push("where the shoot was backed up");
+  if (num(job.files_shot) <= 0) g.push("how many files were taken");
+  if (bal(job) > 0) g.push("the payment collected at the shoot");
+  return g;
+}
+function handoverNeeded(job, toStage) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked) return null;
+  if (!(st.ordinal >= ordOf("gallery_stage") && job.stage_no < ordOf("gallery_stage"))) return null;
+  const g = handoverGaps(job);
   return g.length ? g : null;
 }
 /* must the terms go out before this move? */
@@ -394,6 +409,7 @@ const A = {
     if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
       return A.bookJob(id, to);
     if (slotNeeded(j, to)) return A.setShoot(id, to);
+    if (handoverNeeded(j, to)) return A.handover(id, to);
     if (to === S.settings.pay_gate_stage && bal(j) > 0 && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed", true);
     await patch(id, { stage: to }, override
@@ -410,6 +426,56 @@ const A = {
     await patch(id, { amount_received: num(j.amount_received) + a },
       bal(j) - a > 0 ? rupee(a) + " recorded · " + rupee(bal(j) - a) + " left" : "Fully paid");
   },
+  /* ---- handing the shoot over to the studio ---- */
+  handover(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const b = bal(j);
+    modal(`<h3>Shoot handover</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage
+        ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>Where is the backup?</label>
+      <input class="inp" id="hoBackup" value="${esc(j.backup_location || "")}"
+        placeholder="e.g. Studio HDD 3 + Google Drive">
+      <label style="margin-top:10px">How many files were taken?</label>
+      <input class="inp" id="hoFiles" type="number" min="1" value="${num(j.files_shot) || ""}"
+        placeholder="e.g. 840">
+      ${thenStage ? (b > 0
+        ? `<label style="margin-top:10px">Payment collected (required)</label>
+           <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
+           <p class="hint" style="margin-top:6px">${rupee(j.amount_received)} received so far of
+             ${rupee(j.package_value)}. The balance can stay outstanding — delivery is still blocked at
+             ${esc(S.settings.pay_gate_stage || "Final Delivery")}.</p>`
+        : `<div class="alert green" style="margin-top:12px"><b>Fully paid.</b> Nothing to collect.</div>`) : ""}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveHandover(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and move" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">The client's gallery becomes shareable from ${esc(S.settings.share_from_stage || "")},
+        so the backup has to be safe first.</p>`);
+  },
+  async saveHandover(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const backup = $("hoBackup").value.trim();
+    const files = parseInt($("hoFiles").value || "0", 10) || 0;
+    const payEl = $("hoPay");
+    const pay = payEl ? (parseFloat(payEl.value || "0") || 0) : 0;
+    const b = bal(j);
+
+    if (!backup) return toast("Say where the shoot was backed up", true);
+    if (files <= 0) return toast("Enter how many files were taken", true);
+    if (thenStage && b > 0) {
+      if (pay <= 0) return toast("Record the payment collected at the shoot", true);
+      if (pay > b) return toast("That is more than the " + rupee(b) + " outstanding", true);
+    }
+    A.closeModal();
+    const f = { backup_location: backup, files_shot: files };
+    if (thenStage) f.stage = thenStage;
+    if (pay > 0) f.amount_received = num(j.amount_received) + pay;
+    await patch(id, f, thenStage
+      ? "Handed over" + (pay > 0 ? " · " + rupee(pay) + " recorded" : "") + " · moved to " + thenStage
+      : "Shoot handover updated");
+  },
+
   /* ---- the price and exactly what the client is getting ---- */
   editPackage(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
