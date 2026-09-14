@@ -80,7 +80,6 @@ function tabs() {
   });
   if (canSee("pay")) h += tab("pay", "Payments", owing().length || "", owing().length);
   if (canSee("life")) h += tab("life", "Marketing");
-  if (canSee("archive")) h += tab("archive", "Archive", archivedJobs().length || "");
   if (canSee("sla")) h += tab("sla", "Settings");
   if (canSee("team")) h += tab("team", "Team");
   return h;
@@ -180,7 +179,9 @@ function boardView(k) {
   return `<div class="head"><h1>${MODLABEL[k]}</h1>${locTag()}
       <span class="tag">${pool().filter(j => inMod(j, k)).length} active</span>
       ${late ? `<span class="tag amber">${late} past SLA</span>` : ""}
-      ${ow.length ? `<span class="tag red">${rupee(owedTotal(k))} pending</span>` : ""}</div>
+      ${ow.length ? `<span class="tag red">${rupee(owedTotal(k))} pending</span>` : ""}
+      ${k === "crm" && canSee("archive") ? `<button class="archlink" onclick="A.go('archive')">
+        Archive (${archivedJobs().length})</button>` : ""}</div>
     <p class="sub">${boardSub(k)}</p>${money}${lock}${sla}
     <div class="board">${stages.map(st => colHTML(k, st)).join("")}</div>
     <p class="hint">Card edge shows SLA state. ₹ means money is owed; a black ⤓ strip means the client's link must stay view-only.</p>`;
@@ -188,7 +189,7 @@ function boardView(k) {
 function boardSub(k) {
   return {
     crm: "Every enquiry from first message to signed booking.",
-    prod: "Booked jobs through the shoot to raw files in the client's hands.",
+    prod: "Booked jobs through the shoot to the client's gallery.",
     del: "Client selection through post-production to final handover."
   }[k] || "";
 }
@@ -230,7 +231,8 @@ function cardHTML(j) {
 /* --------------------------------------------------------- archive */
 function archiveView() {
   const list = archivedJobs();
-  return `<div class="head"><h1>Archive</h1>${locTag()}<span class="tag grey">${list.length} parked</span></div>
+  return `<div class="head"><h1>Archive</h1>${locTag()}<span class="tag grey">${list.length} parked</span>
+    <button class="archlink" onclick="A.go('crm')">← Back to CRM</button></div>
   <p class="sub">Leads that went cold or chose someone else. No SLA runs here, and they stay out of the boards.</p>
   <div class="panel">
     ${list.length ? `<table><thead><tr><th>Client</th><th>Shoot</th><th>Location</th><th>Parked</th><th></th></tr></thead><tbody>
@@ -283,6 +285,7 @@ function jobBody(j, notes, acts) {
     ${packageSection(j)}
     ${emailSection(j)}
     ${slotSection(j)}
+    ${handoverSection(j)}
     ${moveSection(j, nextS, prevS, gateBlocked, gate, b, parked)}
     ${paySection(j, b, gate)}
     ${accessSection(j, b)}
@@ -381,8 +384,29 @@ function slotSection(j) {
         <button class="btn p sm" onclick="A.setShoot(${j.id})">Fix this</button></div></div></div>`;
 }
 
+/* the backup and the file count, from the shoot onwards */
+function handoverSection(j) {
+  const gOrd = ordOf("gallery_stage");
+  if (archived(j) || j.stage_no < gOrd - 1) return "";     // nothing shot yet
+  const has = String(j.backup_location || "").trim(), files = num(j.files_shot);
+  const done = has && files > 0;
+  const past = j.stage_no >= gOrd;
+  return `<div class="sec"><h5>Shoot handover</h5>
+    <div class="slot ${done ? "set" : past ? "missing" : ""}">
+      <h6>${done ? "✓ Backed up · " + files + " files" : "Backup not recorded"}</h6>
+      <p>${done
+        ? "Kept at <b>" + esc(has) + "</b>."
+        : "Needed before " + esc(S.settings.gallery_stage || "Client Gallery Ready") +
+          " — where the files are backed up, and how many were taken."}</p>
+      <div class="acts" style="margin-top:10px">
+        <button class="btn ${done ? "sm" : "p sm"}" onclick="A.handover(${j.id})">
+          ${done ? "Edit" : "Record it"}</button></div>
+    </div></div>`;
+}
+
 function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const needs = nextS ? slotNeeded(j, nextS) : null;
+  const hoGaps = nextS && !needs ? handoverNeeded(j, nextS) : null;
   const pkGaps = nextS ? packageNeeded(j, nextS) : null;
   const termsGate = nextS && !pkGaps && termsNeeded(j, nextS);
   return `<div class="sec"><h5>Move stage</h5>
@@ -393,6 +417,8 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
       before ${esc(nextS)}.</b> You'll be asked to send them.</div>` : ""}
     ${needs ? `<div class="alert amber"><b>${needs === "firm" ? "A confirmed date is needed" : "A shoot slot is needed"}
       before ${esc(nextS)}.</b> You'll be asked for it.</div>` : ""}
+    ${hoGaps ? `<div class="alert amber"><b>${esc(nextS)} needs the shoot handed over first.</b>
+      Missing ${esc(hoGaps.join(", "))} — you'll be asked for it.</div>` : ""}
     <div class="acts">
       ${parked
         ? `<button class="btn p" onclick="A.moveTo(${j.id},'${esc(flow()[0].name)}')">Restore to ${esc(flow()[0].name)}</button>`
@@ -458,6 +484,9 @@ function detailSection(j) {
         j.frame_included ? "frame" + (j.frame_size ? " " + esc(j.frame_size) : "") : null
       ].filter(Boolean).join(" · ")}
       <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">set in Package &amp; delivery details above</div></dd>
+    ${j.backup_location || num(j.files_shot) ? `<dt>Shoot files</dt><dd>${num(j.files_shot)
+        ? j.files_shot + " files" : "count not recorded"}${j.backup_location
+        ? ' <span style="color:var(--ink-soft)">· ' + esc(j.backup_location) + "</span>" : ""}</dd>` : ""}
     <dt>Days in stage</dt><dd>${j.days_in_stage}${j.sla_days == null ? " · no SLA" : " of " + j.sla_days + " allowed"}</dd>
     <dt>Stage owner</dt><dd>${esc(j.stage_responsible)}</dd>
     <dt>Assigned to</dt><dd><select class="inp" onchange="A.reassign(${j.id},this.value)">
@@ -607,7 +636,8 @@ function slaView() {
            ["pay_gate_stage", "Delivery blocked at"],
            ["booked_stage", "Advance and shoot slot required from"],
            ["shoot_date_from", "TBD no longer accepted from"],
-           ["terms_stage", "Terms email required before"]].map(([k, lbl]) => `<tr>
+           ["terms_stage", "Terms email required before"],
+           ["gallery_stage", "Shoot handover required before"]].map(([k, lbl]) => `<tr>
           <td><b>${lbl}</b></td>
           <td><select class="inp" onchange="A.setSetting('${k}',this.value)">
             ${flow().map(s => `<option ${s.name === S.settings[k] ? "selected" : ""}>${esc(s.name)}</option>`).join("")}
