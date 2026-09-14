@@ -74,7 +74,7 @@ function tab(key, label, count, bad) {
 function tabs() {
   let h = "";
   if (canSee("dash")) h += tab("dash", "Dashboard");
-  ["crm", "prod", "del"].filter(canSee).forEach(k => {
+  BOARDS.filter(canSee).forEach(k => {
     const late = breaches(k).length;
     h += tab(k, MODLABEL[k], late ? late + " late" : pool().filter(j => inMod(j, k)).length, late);
   });
@@ -156,7 +156,7 @@ function dashView() {
     <div class="panel"><h3>Where everything is</h3><p class="ph">Jobs in each stage right now.</p>
       ${barsHTML(flow().map(s => [s.name, pool().filter(j => j.stage === s.name).length]))}</div>
     <div class="panel"><h3>Past SLA by pipeline</h3><p class="ph">Who needs to unblock what.</p>
-      ${barsHTML(["crm", "prod", "del"].map(k => [MODLABEL[k], breaches(k).length]))}</div>
+      ${barsHTML(BOARDS.map(k => [MODLABEL[k], breaches(k).length]))}</div>
   </div></div>`;
 }
 
@@ -167,7 +167,7 @@ function boardView(k) {
   const ow = owing(k), lk = lockedList(k);
   const money = ow.length ? `<div class="alert red">
       <b>${rupee(owedTotal(k))} pending across ${ow.length} job${ow.length === 1 ? "" : "s"}.</b>
-      ${k === "del" ? "Editing team: nothing gets delivered until this clears." : "Collect before files leave the studio."}
+      ${k === "del" || k === "post" ? "Editing team: nothing is handed over until this clears." : "Collect before files leave the studio."}
       <button class="btn sm" onclick="A.go('pay')">See list</button></div>` : "";
   const lock = lk.length ? `<div class="alert dark">
       <b>⤓ ${lk.length} client link${lk.length === 1 ? "" : "s"} must stay view-only.</b>
@@ -190,7 +190,8 @@ function boardSub(k) {
   return {
     crm: "Every enquiry from first message to signed booking.",
     prod: "Booked jobs through the shoot to the client's gallery.",
-    del: "Client selection through post-production to final handover."
+    post: "Client selection, editing and quality control.",
+    del: "Album, frame, pickup and handover."
   }[k] || "";
 }
 function colHTML(k, st) {
@@ -198,14 +199,14 @@ function colHTML(k, st) {
     .sort((a, b) => (b.days_in_stage || 0) - (a.days_in_stage || 0));
   const shared = (st.modules || []).length > 1;
   const note = st.optional_for
-    ? `<div class="link">${st.optional_for === "video" ? "▶" : "▣"} only packages with ${st.optional_for} — others skip this</div>`
+    ? `<div class="link">${{ video: "▶", album: "▣", frame: "▢", pickup: "▫" }[st.optional_for] || "•"} ${optionalNote(st.optional_for)} — others skip this</div>`
     : shared ? `<div class="link">↳ shared with ${(st.modules || []).filter(m => m !== k).map(m => MODLABEL[m]).join(", ")}</div>` : "";
   return `<div class="col ${shared ? "shared" : ""}">
     <div class="col-h"><div class="r1"><span class="name">${esc(st.name)}</span><span class="n">${list.length}</span></div>
       <div class="sla">${st.sla_days == null ? "No SLA" : "SLA " + st.sla_days + "d · " + esc(st.responsible)}</div>
       ${note}</div>
     <div class="col-body">${list.length ? list.map(cardHTML).join("")
-      : `<div class="empty">${st.optional_for ? "No " + st.optional_for + " jobs here" : "Nothing here"}</div>`}</div></div>`;
+      : `<div class="empty">Nothing here</div>`}</div></div>`;
 }
 function cardHTML(j) {
   const soon = j.shoot_at && j.days_to_shoot <= 2;
@@ -232,7 +233,7 @@ function cardHTML(j) {
 function archiveView() {
   const list = archivedJobs();
   return `<div class="head"><h1>Archive</h1>${locTag()}<span class="tag grey">${list.length} parked</span>
-    <button class="archlink" onclick="A.go('crm')">← Back to CRM</button></div>
+    <button class="archlink" onclick="A.go('crm')">← Back to Sales</button></div>
   <p class="sub">Leads that went cold or chose someone else. No SLA runs here, and they stay out of the boards.</p>
   <div class="panel">
     ${list.length ? `<table><thead><tr><th>Client</th><th>Shoot</th><th>Location</th><th>Parked</th><th></th></tr></thead><tbody>
@@ -269,7 +270,7 @@ const when = ts => {
 function jobBody(j, notes, acts) {
   const nextS = nextStageFor(j), prevS = prevStageFor(j);
   const b = bal(j), gate = S.settings.pay_gate_stage;
-  const gateBlocked = nextS === gate && b > 0;
+  const gateBlocked = !!nextS && payGateCrossed(j, nextS);
   const parked = archived(j);
 
   const payBanner = owes(j)
@@ -472,7 +473,9 @@ function detailSection(j) {
       <button class="btn sm" style="margin-left:6px" onclick="A.editContact(${j.id})">Edit</button></dd>
     <dt>Email</dt><dd>${j.email
       ? `<a href="mailto:${esc(j.email)}" style="color:var(--ink-soft)">${esc(j.email)}</a>`
-      : `<span style="color:var(--ink-soft)">—</span>`}</dd>
+      : `<span style="color:var(--ink-soft)">none yet</span>`}
+      <button class="btn sm" style="margin-left:6px" onclick="A.editContact(${j.id})">
+        ${j.email ? "Edit" : "Add"}</button></dd>
     <dt>Shoot type</dt><dd><select class="inp" onchange="A.setType(${j.id},this.value)">
       ${typeOptions(j.shoot_type)}</select></dd>
     <dt>Source</dt><dd>${esc(j.source || "—")}</dd>
@@ -514,7 +517,7 @@ function stepper(j) {
     const skip = !appliesTo(j, s);
     out += `<div class="step ${skip ? "" : i < at ? "done" : i === at ? "now" : ""}" ${skip ? 'style="opacity:.4"' : ""}>
       <span class="bul"></span><span class="sw"><span>${esc(s.name)}</span>
-      <small>${skip ? "skipped · no " + s.optional_for
+      <small>${skip ? "skipped"
         : (s.sla_days == null ? "no SLA" : "SLA " + s.sla_days + "d") + (i === at ? " · day " + j.days_in_stage : "")}</small>
       </span></div>`;
   });
@@ -553,7 +556,7 @@ function payView() {
       </tbody></table>` : `<div class="empty">Nothing pending</div>`}</div>
   </div><div>
     <div class="panel"><h3>Pending by pipeline</h3><p class="ph">Where the money is stuck.</p>
-      ${barsHTML(["crm", "prod", "del"].map(k => [MODLABEL[k], owedTotal(k)]), rupee)}</div>
+      ${barsHTML(BOARDS.map(k => [MODLABEL[k], owedTotal(k)]), rupee)}</div>
     <div class="panel"><h3>Pending by location</h3><p class="ph">Balance owed, not job count.</p>
       ${barsHTML(LOCATIONS.map(l => [l, S.jobs.filter(j => owes(j) && j.location === l).reduce((a, j) => a + bal(j), 0)]), rupee)}</div>
   </div></div>`;
@@ -593,7 +596,7 @@ function lifeView() {
   </div><div>
     <div class="panel"><h3>Jobs by location</h3><p class="ph">Whole pipeline.</p>
       ${barsHTML(LOCATIONS.map(l => [l, S.jobs.filter(j => j.location === l).length]))}</div>
-    <div class="panel"><h3>Pipeline funnel</h3><p class="ph">How many have reached each CRM stage or beyond.</p>
+    <div class="panel"><h3>Sales funnel</h3><p class="ph">How many have reached each Sales stage or beyond.</p>
       ${barsHTML(funnel)}</div>
     <div class="panel"><h3>Deliverables mix</h3><p class="ph">What clients are actually buying.</p>
       ${barsHTML([["Photos only", p.filter(j => !j.has_video && !j.has_album && !j.frame_included).length],
@@ -671,7 +674,7 @@ function slaView() {
       <input class="inp" value="${esc(S.settings.email_subject || "")}" onchange="A.setSetting('email_subject',this.value)">
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
       <textarea style="min-height:170px" onchange="A.setSetting('email_body',this.value)">${esc(S.settings.email_body || "")}</textarea>
-      <p class="hint">The sending domain has to be verified with the email provider, otherwise it will bounce.</p></div>
+      <p class="hint">Sent through the studio Gmail account. Replies go wherever the reply-to says.</p></div>
     <div class="panel"><h3>SLA breach email</h3><p class="ph">Daily summary to the founder.</p>
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Send to</label>
       <input class="inp" value="${esc(S.settings.alert_to || "")}" onchange="A.setSetting('alert_to',this.value)">
