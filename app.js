@@ -13,8 +13,9 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 /* ------------------------------------------------------------ state */
 const S = {
-  session: null, me: null, stages: [], settings: {}, jobs: [], people: [], types: [], typeRows: [],
-  view: "crm", loc: "All", openId: null, busy: false
+  session: null, me: null, stages: [], settings: {}, jobs: [], children: [],
+  people: [], types: [], typeRows: [],
+  view: "crm", loc: "All", openId: null, busy: false, archiveTab: "leads"
 };
 
 const MODLABEL = { crm: "Sales", prod: "Production", post: "Post Production",
@@ -26,16 +27,23 @@ const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repe
 const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
 const FRAME_SIZES = ["8 x 12", "12 x 18", "16 x 24", "24 x 36"];
 const VENUES = ["Studio", "Home", "Outdoor"];
-/* side tracks: work that runs alongside the main line instead of holding it up */
-const TRACKS = [
-  { key: "video", field: "video_stage", label: "Video",
-    applies: j => !!j.has_video, gates: "digital_stage" },
-  { key: "album", field: "album_stage", label: "Album",
-    applies: j => !!j.has_album, gates: "pickup_stage" },
-  { key: "frame", field: "frame_stage", label: "Frame",
-    applies: j => !!j.frame_included, gates: "pickup_stage" }
+/* work that runs in parallel becomes a child process with a life of its own */
+const KINDS = [
+  { key: "video", label: "Video", mark: "▶", module: "post",
+    applies: j => !!j.has_video },
+  { key: "album", label: "Album", mark: "▣", module: "del",
+    applies: j => !!j.has_album },
+  { key: "frame", label: "Frame", mark: "▢", module: "del",
+    applies: j => !!j.frame_included }
 ];
-const DONE = "Done";
+const kindDef = k => KINDS.find(x => x.key === k);
+/* which rows a board shows, in order */
+const ROWS = {
+  crm:  [{ main: true }],
+  prod: [{ main: true }],
+  post: [{ main: true }, { kind: "video" }],
+  del:  [{ kind: "album" }, { kind: "frame" }, { main: true }]
+};
 
 /* ------------------------------------------------------------ utils */
 const $ = id => document.getElementById(id);
@@ -100,47 +108,37 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is still|The frame is still)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
 /* ------------------------------------------------- derived helpers */
 const stageByName = n => S.stages.find(s => s.name === n);
-/* the main line only — track steps live outside it */
+/* the main line only — a child's steps live outside it */
 const flow = () => S.stages.filter(s => !s.is_parked && !s.track).sort((a, b) => a.ordinal - b.ordinal);
 const parkedStage = () => (S.stages.find(s => s.is_parked) || {}).name;
 const modStages = k => S.stages.filter(s => (s.modules || []).includes(k) && !s.is_parked && !s.track)
   .sort((a, b) => a.ordinal - b.ordinal);
-/* the steps of one side track, in order */
-const trackSteps = t => S.stages.filter(s => s.track === t).sort((a, b) => a.ordinal - b.ordinal);
-const trackDef = k => TRACKS.find(t => t.key === k);
-const trackOf = (job, k) => job[trackDef(k).field] || null;
-const trackRuns = (job, k) => trackDef(k).applies(job);
-const trackDone = (job, k) => !trackRuns(job, k) || trackOf(job, k) === DONE;
-/* which track steps belong on this module's board */
-const modTracks = k => TRACKS.filter(t =>
-  trackSteps(t.key).some(s => (s.modules || []).includes(k)));
-function trackNext(job, k) {
-  const steps = trackSteps(k).map(s => s.name);
-  const at = trackOf(job, k);
-  if (at === DONE) return null;
-  const i = steps.indexOf(at);
-  return i < 0 ? steps[0] : (i + 1 < steps.length ? steps[i + 1] : DONE);
+/* the steps of one process, in order */
+const kindSteps = k => S.stages.filter(s => s.track === k).sort((a, b) => a.ordinal - b.ordinal);
+const childrenOf = id => S.children.filter(c => c.job_id === id);
+const childOf = (id, k) => S.children.find(c => c.job_id === id && c.kind === k);
+const liveChildren = k => S.children.filter(c => c.state === "active" && c.kind === k &&
+  inLoc(S.jobs.find(j => j.id === c.job_id) || {}));
+function childNext(c) {
+  const steps = kindSteps(c.kind).map(s => s.name);
+  const i = steps.indexOf(c.stage);
+  return i >= 0 && i + 1 < steps.length ? steps[i + 1] : null;
 }
-function trackPrev(job, k) {
-  const steps = trackSteps(k).map(s => s.name);
-  const at = trackOf(job, k);
-  if (at === DONE) return steps[steps.length - 1];
-  const i = steps.indexOf(at);
+function childPrev(c) {
+  const steps = kindSteps(c.kind).map(s => s.name);
+  const i = steps.indexOf(c.stage);
   return i > 0 ? steps[i - 1] : null;
 }
-const trackDays = (job, k) => num(job[k + "_days"]);
-function trackSla(job, k) {
-  const st = stageByName(trackOf(job, k));
-  if (!st || st.sla_days == null) return "No SLA";
-  const d = trackDays(job, k);
-  return d > st.sla_days ? "OVERDUE" : d === st.sla_days ? "Due today" : "On track";
-}
+/* the last step of a process is where it waits to be picked up or archived */
+const childAtEnd = c => !childNext(c);
+const childBlocking = job => childrenOf(job.id).filter(c => c.state === "active" &&
+  c.kind !== "video" && !childAtEnd(c));
 const isAdmin = () => !!(S.me && S.me.is_admin);
 const myMods = () => (S.me ? S.me.access : []);
 const ordOf = key => (stageByName(S.settings[key]) || {}).ordinal || 999;
@@ -190,8 +188,10 @@ const owes = j => j.payment_status === "PENDING";
 const locked = j => j.file_access === "VIEW-ONLY - downloads OFF";
 const archived = j => !!j.is_parked;
 const inLoc = j => S.loc === "All" || j.location === S.loc;
-const pool = () => S.jobs.filter(j => inLoc(j) && !archived(j));
+const pool = () => S.jobs.filter(j => inLoc(j) && !archived(j) && !j.archived_at);
 const archivedJobs = () => S.jobs.filter(j => inLoc(j) && archived(j));
+const doneJobs = () => S.jobs.filter(j => inLoc(j) && !!j.archived_at);
+const archivedChildren = () => S.children.filter(c => c.state === "archived" && c.kind === "video");
 const inMod = (j, k) => (j.stage_modules || []).includes(k);
 const breaches = k => pool().filter(j => j.sla_status === "OVERDUE" && (!k || inMod(j, k)));
 const dueToday = k => pool().filter(j => j.sla_status === "Due today" && (!k || inMod(j, k)));
@@ -258,25 +258,28 @@ function editInfoNeeded(job, to) {
   if (!crossing(job, to, "qc_stage")) return false;
   return num(job.photos_edited) <= 0 || !String(job.edited_link || "").trim();
 }
-/* a side track that has not caught up yet, and is holding this move */
-function trackBlocking(job, toStage) {
-  for (const t of TRACKS) {
-    if (!crossing(job, toStage, t.gates)) continue;
-    if (!trackDone(job, t.key))
-      return t.label.toLowerCase() + " is still in " + (trackOf(job, t.key) || "its track");
-  }
-  return null;
+/* a child process that has not finished, and is holding the job back */
+function childBlocking2(job, toStage) {
+  if (!crossing(job, toStage, "pickup_stage")) return null;
+  const held = childBlocking(job);
+  if (!held.length) return null;
+  return held.map(c => kindDef(c.kind).label.toLowerCase() + " is still at " + c.stage).join(", ");
 }
+/* nothing physical has been started yet, but the package calls for it */
+const physicalDue = job =>
+  job.stage === (S.settings.digital_stage || "Digital Files Delivery") &&
+  (job.has_album || job.frame_included) &&
+  !childrenOf(job.id).some(c => c.kind === "album" || c.kind === "frame");
 /* money owed, and this move would take the job past the point where that matters */
 function payGateCrossed(job, toStage) {
   const gate = stageByName(S.settings.pay_gate_stage);
-  if (!gate || gate.track) return false;        // the gate sits on a side track instead
+  if (!gate || gate.track) return false;        // the gate sits on a child process instead
   const st = stageByName(toStage);
   if (!st || st.is_parked || st.track || bal(job) <= 0) return false;
   return st.ordinal >= gate.ordinal && job.stage_no < gate.ordinal;
 }
-/* the same block, for a track step such as Album Printing */
-const trackPayGate = (job, toStep) =>
+/* the same block, for a child step such as Album Printing */
+const childPayGate = (job, toStep) =>
   toStep === S.settings.pay_gate_stage && bal(job) > 0;
 /* what the photographer still owes the studio before the gallery goes out */
 function handoverGaps(job) {
@@ -328,10 +331,14 @@ async function loadReference() {
   S.me = S.people.find(p => p.id === S.session.user.id) || null;
 }
 async function loadJobs() {
-  const { data, error } = await sb.from("v_jobs").select("*")
-    .order("stage_no").order("days_in_stage", { ascending: false });
-  if (error) throw error;
-  S.jobs = data || [];
+  const [j, c] = await Promise.all([
+    sb.from("v_jobs").select("*").order("stage_no").order("days_in_stage", { ascending: false }),
+    sb.from("v_children").select("*").order("stage_no").order("days_in_stage", { ascending: false })
+  ]);
+  if (j.error) throw j.error;
+  if (c.error) throw c.error;
+  S.jobs = j.data || [];
+  S.children = c.data || [];
 }
 async function refresh(msg) {
   try {
@@ -367,6 +374,7 @@ const A = {
     S.view = v; closeDrawer(); render(); window.scrollTo(0, 0);
   },
   setLoc(l) { S.loc = l; closeDrawer(); render(); },
+  archiveTab(t) { S.archiveTab = t; render(); },
   openJob(id) { openJob(id).catch(fail); },
   closeModal() { $("modalHost").innerHTML = ""; },
   async signOut() { await sb.auth.signOut(); S.session = null; S.me = null; renderLogin(); },
@@ -549,8 +557,13 @@ const A = {
     if (handoverNeeded(j, to)) return A.handover(id, to);
     if (galleryLinkNeeded(j, to)) return A.setGallery(id, to);
     if (editInfoNeeded(j, to)) return A.setEdit(id, to);
-    const held = trackBlocking(j, to);
-    if (held) return toast("Blocked — the " + held, true);
+    /* the physical work hands the job over itself, and closes itself off.
+       The database checks it is finished and says so if it is not. */
+    if (to === (S.settings.pickup_stage || "Waiting for Client Pickup") &&
+        childrenOf(id).some(c => c.state === "active" && c.kind !== "video"))
+      return A.readyForPickup(id);
+    const held = childBlocking2(j, to);
+    if (held) return toast("Blocked — " + held, true);
     if (payGateCrossed(j, to) && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed", true);
     await patch(id, { stage: to }, override
@@ -617,41 +630,65 @@ const A = {
     await patch(id, f, thenStage ? n + " files · moved to " + thenStage : "Edited files recorded");
   },
 
-  /* ---- side tracks ---- */
-  async moveTrack(id, key, to, override) {
-    const j = S.jobs.find(x => x.id === id);
-    const target = to || trackNext(j, key);
+  /* ---- child processes ---- */
+  async moveChild(childId, to, override) {
+    const c = S.children.find(x => x.id === childId);
+    if (!c) return;
+    const j = S.jobs.find(x => x.id === c.job_id);
+    const target = to || childNext(c);
     if (!target) return;
-    if (key === "video" && target === "Video QC" && !String(j.video_link || "").trim())
-      return A.setVideoLink(id, target);
-    if (trackPayGate(j, target) && !override)
+    if (c.kind === "video" && target === "Video QC" && !String(j.video_link || "").trim())
+      return A.setVideoLink(childId, target);
+    if (childPayGate(j, target) && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed before " + target, true);
-    const label = trackDef(key).label;
-    await patch(id, { [trackDef(key).field]: target },
-      label + (target === DONE ? " finished" : " · " + target));
+    await patchChild(childId, { stage: target },
+      kindDef(c.kind).label + " · " + target);
     if (override) await sb.from("job_activity").insert({
-      job_id: id, action: "payment override: " + label.toLowerCase() + " sent to " + target +
+      job_id: c.job_id, action: "payment override: " + c.kind + " sent to " + target +
         " with " + rupee(bal(j)) + " owing", actor_id: S.me.id });
   },
-  setVideoLink(id, thenStep) {
-    const j = S.jobs.find(x => x.id === id);
+  async assignChild(childId, uid) {
+    await patchChild(childId, { owner_id: uid || null }, "Reassigned");
+  },
+  async startPhysical(id) {
+    const { data, error } = await sb.rpc("start_physical_work", { p_job: id });
+    if (error) return fail(error);
+    await refresh("Started the " + (data || "physical work"));
+  },
+  async readyForPickup(id) {
+    const { data, error } = await sb.rpc("ready_for_pickup", { p_job: id });
+    if (error) return fail(error);
+    await refresh("Moved to " + (data || "pickup"));
+  },
+  async restoreVideo(id) {
+    const { data, error } = await sb.rpc("restore_video", { p_job: id });
+    if (error) return fail(error);
+    await refresh("Video back at " + (data || "Video Editing"));
+  },
+  setVideoLink(childId, thenStep) {
+    const c = S.children.find(x => x.id === childId);
+    const j = S.jobs.find(x => x.id === c.job_id);
     modal(`<h3>Edited video</h3>
       <p class="mh">${esc(j.client_name)}${thenStep ? " — needed before " + esc(thenStep) : ""}</p>
       <label>Pixieset link for the edited video</label>
       <input class="inp" id="vdLink" value="${esc(j.video_link || "")}"
         placeholder="https://littleshots.pixieset.com/…">
       <div class="acts" style="margin-top:16px">
-        <button class="btn p" onclick="A.saveVideoLink(${id},${thenStep ? `'${esc(thenStep)}'` : "null"})">
+        <button class="btn p" onclick="A.saveVideoLink(${childId},${thenStep ? `'${esc(thenStep)}'` : "null"})">
           Save${thenStep ? " and move" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
   },
-  async saveVideoLink(id, thenStep) {
+  async saveVideoLink(childId, thenStep) {
+    const c = S.children.find(x => x.id === childId);
     const link = $("vdLink").value.trim();
     if (!link) return toast("Paste the Pixieset link for the video", true);
     A.closeModal();
-    const f = { video_link: link };
-    if (thenStep) f.video_stage = thenStep;
-    await patch(id, f, thenStep ? "Video · " + thenStep : "Video link saved");
+    const { error } = await sb.from("jobs").update({ video_link: link }).eq("id", c.job_id);
+    if (error) return fail(error);
+    /* the link is on the job now, so move the child directly rather than
+       bouncing back through moveChild, which would still see the old copy */
+    if (thenStep) return patchChild(childId, { stage: thenStep }, "Video · " + thenStep);
+    await refresh("Video link saved");
   },
 
   /* ---- handing the shoot over to the studio ---- */
@@ -755,7 +792,7 @@ const A = {
           Save${thenStage ? " and continue" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">This is what goes into the terms email, so it has to be right before
-        the payment link is shared. A video, album or frame each add their own side track.</p>`);
+        the payment link is shared. A video, album or frame each become a process of their own.</p>`);
     A.pkSync();
   },
   pkSync() {
@@ -785,11 +822,11 @@ const A = {
     if (alb && !asize) return toast("Pick the album size", true);
     if (alb && sheets <= 0) return toast("How many sheets in the album?", true);
     if (fr && !fsize) return toast("Pick the frame size", true);
-    /* a track that is already under way cannot simply be taken off the job */
+    /* a process that is already under way cannot simply be taken off the job */
     for (const [on, key] of [[vid, "video"], [alb, "album"], [fr, "frame"]]) {
-      const at = trackOf(j, key);
-      if (!on && trackRuns(j, key) && at && at !== DONE)
-        return toast("Can't remove the " + key + " — its track is already at " + at, true);
+      const c = childOf(id, key);
+      if (!on && c && c.state === "active")
+        return toast("Can't remove the " + key + " — its process is already at " + c.stage, true);
     }
 
     A.closeModal();
@@ -918,6 +955,14 @@ async function patch(id, fields, msg) {
   if (S.busy) return;
   S.busy = true;
   const { error } = await sb.from("jobs").update(fields).eq("id", id);
+  S.busy = false;
+  if (error) return fail(error);
+  await refresh(msg);
+}
+async function patchChild(id, fields, msg) {
+  if (S.busy) return;
+  S.busy = true;
+  const { error } = await sb.from("job_children").update(fields).eq("id", id);
   S.busy = false;
   if (error) return fail(error);
   await refresh(msg);
