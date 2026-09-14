@@ -514,9 +514,6 @@ function childRow(j, c) {
   const next = childNext(c), prev = childPrev(c);
   const gone = c.state === "archived";
   const blocked = next && childPayGate(j, next);
-  const end = childAtEnd(c);
-  const handOver = end && !gone && c.kind !== "video" &&
-    j.stage_no < ordOf("pickup_stage") && !childBlocking(j).length;
   return `<div class="trackrow ${gone ? "done" : ""}">
     <div class="tr1"><b>${def.mark} ${esc(def.label)}</b>
       <span class="pill ${gone ? "green" : c.sla_status === "OVERDUE" ? "red"
@@ -536,12 +533,11 @@ function childRow(j, c) {
            onclick="A.moveChild(${c.id},${next ? `'${esc(next)}'` : "null"})"
            ${next && !blocked ? "" : "disabled"}>${next ? esc(next) + " →" : "Last step"}</button>
          ${blocked ? `<button class="btn warn sm"
-           onclick="A.moveChild(${c.id},'${esc(next)}',true)">Override</button>` : ""}
-         ${handOver ? `<button class="btn p sm" onclick="A.readyForPickup(${j.id})">
-           Ready for pickup</button>` : ""}`}
+           onclick="A.moveChild(${c.id},'${esc(next)}',true)">Override</button>` : ""}`}
     </div>
     ${gone || c.kind === "video" ? "" : `<p class="hint" style="margin-top:6px">${
-      esc(S.settings.pickup_stage || "Waiting for Client Pickup")} waits for this.</p>`}
+      esc(S.settings.pickup_stage || "Waiting for Client Pickup")} waits for this — move the job
+      itself from Move stage once this is finished.</p>`}
     <div style="margin-top:8px">
       <select class="inp" onchange="A.assignChild(${c.id},this.value)" ${gone ? "disabled" : ""}>
         <option value="">Unassigned</option>
@@ -592,6 +588,9 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
       before ${esc(nextS)}.</b> You'll be asked for it.</div>` : ""}
     ${hoGaps ? `<div class="alert amber"><b>${esc(nextS)} needs the shoot handed over first.</b>
       Missing ${esc(hoGaps.join(", "))} — you'll be asked for it.</div>` : ""}
+    ${!parked && !prevS && j.stage !== flow()[0].name
+      ? `<div class="alert grey"><b>This is the first step of ${esc(modLabel(j))}.</b>
+         A job moves back freely inside its own module, but never into one it has already left.</div>` : ""}
     <div class="acts">
       ${parked
         ? `<button class="btn p" onclick="A.moveTo(${j.id},'${esc(flow()[0].name)}')">Restore to ${esc(flow()[0].name)}</button>`
@@ -599,8 +598,11 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
            <button class="btn ${gateBlocked || held ? "" : "p"}" onclick="A.moveTo(${j.id},${nextS ? `'${esc(nextS)}'` : "null"})" ${!nextS || gateBlocked || held ? "disabled" : ""}>
              ${nextS ? esc(nextS) + " →" : "Final stage"}</button>
            ${gateBlocked ? `<button class="btn warn" onclick="A.moveTo(${j.id},'${esc(nextS)}',true)">Override &amp; deliver</button>` : ""}
-           ${parkedStage() ? `<button class="btn" onclick="A.moveTo(${j.id},'${esc(parkedStage())}')">Archive</button>` : ""}`}
-    </div><p class="hint">Moving resets the SLA clock and is logged against your name.</p></div>`;
+           ${parkedStage() && j.stage_no < ordOf("booked_stage")
+              ? `<button class="btn" onclick="A.moveTo(${j.id},'${esc(parkedStage())}')">Archive</button>` : ""}`}
+    </div><p class="hint">Moving resets the SLA clock and is logged against your name.${
+      j.stage_no >= ordOf("booked_stage") && !parked
+        ? " A booked shoot cannot be archived." : ""}</p></div>`;
 }
 
 function paySection(j, b, gate) {
