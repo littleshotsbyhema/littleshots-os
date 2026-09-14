@@ -208,8 +208,7 @@ select.inp,input.inp{border:1px solid var(--line);border-radius:8px;padding:7px 
 .bars{display:flex;flex-direction:column;gap:9px}
 .bar{display:grid;grid-template-columns:minmax(120px,190px) 1fr 62px;align-items:center;gap:10px;font-size:12.5px}
 .bar .t{color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.track{height:8px;background:var(--grey-soft);border-radius:99px;overflow:hidden}
-.bar .track{height:8px}
+.bar .track{height:8px;background:var(--grey-soft);border-radius:99px;overflow:hidden}
 .fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#c2557a,#e3a3bd)}
 .bar .n{text-align:right;font-weight:650;font-size:12px}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
