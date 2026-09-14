@@ -108,7 +108,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -176,11 +176,17 @@ function nextStageFor(job) {
   while (++i < f.length) if (appliesTo(job, f[i])) return f[i].name;
   return null;
 }
+/* two stages belong to the same pipeline if they share a module */
+const sameModule = (a, b) => (a.modules || []).some(m => (b.modules || []).includes(m));
+/* a job walks back only inside its own module - once it has crossed into the
+   next one the door closes behind it */
 function prevStageFor(job) {
   const f = flow();
   let i = f.findIndex(s => s.name === job.stage);
   if (i < 0) return null;
-  while (--i >= 0) if (appliesTo(job, f[i])) return f[i].name;
+  const here = f[i];
+  while (--i >= 0) if (appliesTo(job, f[i]))
+    return sameModule(here, f[i]) ? f[i].name : null;
   return null;
 }
 const bal = j => Math.max(0, num(j.balance));
@@ -193,6 +199,7 @@ const archivedJobs = () => S.jobs.filter(j => inLoc(j) && archived(j));
 const doneJobs = () => S.jobs.filter(j => inLoc(j) && !!j.archived_at);
 const archivedChildren = () => S.children.filter(c => c.state === "archived" && c.kind === "video");
 const inMod = (j, k) => (j.stage_modules || []).includes(k);
+const modLabel = j => (j.stage_modules || []).map(m => MODLABEL[m]).join(" + ") || "this module";
 const breaches = k => pool().filter(j => j.sla_status === "OVERDUE" && (!k || inMod(j, k)));
 const dueToday = k => pool().filter(j => j.sla_status === "Due today" && (!k || inMod(j, k)));
 const owing = k => pool().filter(j => owes(j) && (!k || inMod(j, k)));
@@ -959,14 +966,6 @@ async function patch(id, fields, msg) {
   if (error) return fail(error);
   await refresh(msg);
 }
-async function patchChild(id, fields, msg) {
-  if (S.busy) return;
-  S.busy = true;
-  const { error } = await sb.from("job_children").update(fields).eq("id", id);
-  S.busy = false;
-  if (error) return fail(error);
-  await refresh(msg);
-}
 /* a size dropdown with the studio's standard sizes plus Others */
 function sizeSelect(id, current, list) {
   const other = !!(current && !list.includes(current));
@@ -979,6 +978,14 @@ function sizeValue(selId, otherId) {
   const sel = $(selId), oth = $(otherId);
   const v = sel ? sel.value : "";
   return v === "Others" ? ((oth && oth.value) || "").trim() : v;
+}
+async function patchChild(id, fields, msg) {
+  if (S.busy) return;
+  S.busy = true;
+  const { error } = await sb.from("job_children").update(fields).eq("id", id);
+  S.busy = false;
+  if (error) return fail(error);
+  await refresh(msg);
 }
 function modal(inner) {
   $("modalHost").innerHTML = `<div class="modal" onclick="if(event.target===this)A.closeModal()">
