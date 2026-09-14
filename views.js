@@ -264,6 +264,7 @@ function cardHTML(j) {
       : j.shoot_status === "TBD" ? `<div class="shootbar tbd">◷ DATE TBD</div>`
       : j.shoot_status === "Missing" ? `<div class="owebar">◷ NO SHOOT SLOT</div>` : ""}
     ${owes(j) ? `<div class="owebar">₹ ${rupee(bal(j)).slice(1)} PENDING</div>` : ""}
+    ${selectionOver(j) ? `<div class="shootbar tbd">◆ ${selectionOver(j)} OVER THE PACKAGE</div>` : ""}
     ${locked(j) ? `<div class="owebar lock">⤓ DOWNLOAD LOCKED · VIEW ONLY</div>`
       : j.file_access === "Downloads unlocked" ? `<div class="okbar">⤓ Download unlocked</div>` : ""}
     <div class="row">
@@ -369,6 +370,7 @@ function jobBody(j, notes, acts) {
     ${emailSection(j)}
     ${slotSection(j)}
     ${handoverSection(j)}
+    ${selectionSection(j)}
     ${tracksSection(j)}
     ${linksSection(j)}
     ${moveSection(j, nextS, prevS, gateBlocked, gate, b, parked)}
@@ -482,13 +484,54 @@ function handoverSection(j) {
     <div class="slot ${done ? "set" : past ? "missing" : ""}">
       <h6>${done ? "✓ Backed up · " + files + " files" : "Backup not recorded"}</h6>
       <p>${done
-        ? "Kept at <b>" + esc(has) + "</b>."
+        ? "Kept at <b>" + esc(has) + "</b>." + (manifestOf(j).length
+          ? " Every file is named, so the client's picks can be checked."
+          : ` <span style="color:var(--amber)">Only a count — paste the file names and their
+              selection can be checked against the shoot.</span>`)
         : "Needed before " + esc(S.settings.gallery_stage || "Client Gallery Ready") +
-          " — where the files are backed up, and how many were taken."}</p>
+          " — where the files are backed up, and the list of files taken."}</p>
       <div class="acts" style="margin-top:10px">
         <button class="btn ${done ? "sm" : "p sm"}" onclick="A.handover(${j.id})">
           ${done ? "Edit" : "Record it"}</button></div>
     </div></div>`;
+}
+
+/* the client picks their own photos, on their own link */
+function selectionSection(j) {
+  const selOrd = ordOf("selection_stage");
+  if (archived(j) || j.stage_no < selOrd) return "";     // the gallery isn't out yet
+  const picked = chosenOf(j), inHand = selectionIn(j), over = selectionOver(j);
+  const held = manifestOf(j).length;
+  const live = j.stage_no === selOrd && j.selection_open;
+  const box = inHand
+    ? `<div class="slot set"><h6>✓ ${picked.length} photo${picked.length === 1 ? "" : "s"} chosen</h6>
+        <p>Sent in ${when(j.selection_submitted_at)}${num(j.edited_count)
+          ? " · the package promises " + j.edited_count : ""}.
+          ${over ? `<br><b style="color:var(--amber)">${over} more than the package includes —
+            bill the extras or trim it with them.</b>` : ""}</p></div>`
+    : live
+    ? `<div class="slot"><h6>Waiting on the client</h6>
+        <p>Their link is live. They tick their photos and it lands here by itself —
+          the job moves on to ${esc(nextStageFor(j) || "editing")} the moment they send it.
+          ${held ? held + " files are on the link." : `<span style="color:var(--amber)">No file list
+            was recorded for this shoot, so nothing they send can be checked.</span>`}</p></div>`
+    : `<div class="slot missing"><h6>Nothing recorded</h6>
+        <p>This job moved past the selection without one on file.</p></div>`;
+  return `<div class="sec"><h5>Client selection</h5>${box}
+    <div class="acts" style="margin-top:10px">
+      ${live ? `<button class="btn p sm" onclick="A.copySelectionLink(${j.id})">Copy link for WhatsApp</button>
+        ${j.email ? `<button class="btn sm" onclick="A.mailSelectionLink(${j.id})">Email it</button>` : ""}
+        <button class="btn sm" onclick="A.setSelection(${j.id})">Enter it myself</button>` : ""}
+      ${inHand ? `<button class="btn sm" onclick="A.reopenSelection(${j.id})">Let them change it</button>
+        <button class="btn sm" onclick="A.setSelection(${j.id})">Edit the list</button>` : ""}
+      ${!inHand && !live ? `<button class="btn p sm" onclick="A.setSelection(${j.id})">Record it</button>` : ""}
+    </div>
+    ${picked.length ? `<details style="margin-top:11px"><summary
+      style="cursor:pointer;font-size:12.5px;color:var(--ink-soft);font-weight:650">
+      The ${picked.length} files they chose</summary>
+      <textarea readonly style="min-height:120px;margin-top:8px"
+        onclick="this.select()">${esc(picked.join("\n"))}</textarea></details>` : ""}
+  </div>`;
 }
 
 /* video, album and frame — each a process of its own */
@@ -571,12 +614,15 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const termsGate = nextS && !pkGaps && termsNeeded(j, nextS);
   const held = nextS ? childBlocking2(j, nextS) : null;
   const needGallery = nextS && galleryLinkNeeded(j, nextS);
+  const needPicks = nextS && selectionNeeded(j, nextS);
   const needEdit = nextS && editInfoNeeded(j, nextS);
   return `<div class="sec"><h5>Move stage</h5>
     ${held ? `<div class="alert red"><b>Held by another process.</b> The ${esc(held)} —
       ${esc(nextS)} waits for it.</div>` : ""}
     ${needGallery ? `<div class="alert amber"><b>${esc(nextS)} needs the Pixieset gallery link.</b>
       You'll be asked for it.</div>` : ""}
+    ${needPicks ? `<div class="alert amber"><b>The client hasn't sent their selection yet.</b>
+      Their link is live — or you can enter the files yourself when you move it.</div>` : ""}
     ${needEdit ? `<div class="alert amber"><b>${esc(nextS)} needs the edited file count and link.</b>
       You'll be asked for them.</div>` : ""}
     ${gateBlocked ? `<div class="alert red"><b>Blocked.</b> ${rupee(b)} outstanding — clear it or override.</div>` : ""}
@@ -664,7 +710,8 @@ function detailSection(j) {
       ].filter(Boolean).join(" · ")}
       <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">set in Package &amp; delivery details above</div></dd>
     ${j.backup_location || num(j.files_shot) ? `<dt>Shoot files</dt><dd>${num(j.files_shot)
-        ? j.files_shot + " files" : "count not recorded"}${j.backup_location
+        ? j.files_shot + " files" : "count not recorded"}${manifestOf(j).length
+        ? ' <span class="pill blue">named</span>' : ""}${j.backup_location
         ? ' <span style="color:var(--ink-soft)">· ' + esc(j.backup_location) + "</span>" : ""}</dd>` : ""}
     <dt>Days in stage</dt><dd>${j.days_in_stage}${j.sla_days == null ? " · no SLA" : " of " + j.sla_days + " allowed"}</dd>
     <dt>Stage owner</dt><dd>${esc(j.stage_responsible)}</dd>
