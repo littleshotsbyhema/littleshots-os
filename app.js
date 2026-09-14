@@ -17,8 +17,10 @@ const S = {
   view: "crm", loc: "All", openId: null, busy: false
 };
 
-const MODLABEL = { crm: "CRM", prod: "Production", del: "Delivery", life: "Marketing" };
-const ALLMODS = ["crm", "prod", "del", "life"];
+const MODLABEL = { crm: "Sales", prod: "Production", post: "Post Production",
+                   del: "Delivery", life: "Marketing" };
+const ALLMODS = ["crm", "prod", "post", "del", "life"];
+const BOARDS = ["crm", "prod", "post", "del"];
 const LOCATIONS = ["Coimbatore", "Bangalore - MDP", "Bangalore - JP Nagar", "Erode", "Others"];
 const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repeat client", "Walk-in", "Other"];
 const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
@@ -42,12 +44,40 @@ const fmtShoot = iso => {
 const fmtDay = iso => new Date(iso).toLocaleDateString("en-IN",
   { weekday: "long", day: "numeric", month: "long" });
 const isToday = iso => iso && new Date(iso).toDateString() === new Date().toDateString();
-/* an ISO string turned into the value a datetime-local input wants */
-const toLocalInput = iso => {
-  if (!iso) return "";
-  const d = new Date(iso), p = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-};
+
+const pad = n => String(n).padStart(2, "0");
+/* the studio shoots between 8am and 6pm, on the half hour */
+const TIME_SLOTS = (() => {
+  const out = [];
+  for (let m = 8 * 60; m <= 18 * 60; m += 30) {
+    const h = Math.floor(m / 60), mi = m % 60;
+    out.push({ v: pad(h) + ":" + pad(mi),
+               label: (h % 12 === 0 ? 12 : h % 12) + ":" + pad(mi) + (h < 12 ? " am" : " pm") });
+  }
+  return out;
+})();
+const dateOf = iso => iso ? (d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)(new Date(iso)) : "";
+const timeOf = iso => iso ? (d => pad(d.getHours()) + ":" + pad(d.getMinutes()))(new Date(iso)) : "";
+/* a date box and a half-hour dropdown, used wherever a shoot is scheduled */
+function slotPicker(prefix, iso) {
+  const dv = dateOf(iso), tv = timeOf(iso);
+  const odd = tv && !TIME_SLOTS.some(t => t.v === tv);
+  return `<div class="f2">
+    <div><label>Date</label>
+      <input class="inp" id="${prefix}Date" type="date" value="${dv}"></div>
+    <div><label>Time</label>
+      <select class="inp" id="${prefix}Time">
+        <option value="">Pick a time</option>
+        ${TIME_SLOTS.map(t => `<option value="${t.v}" ${t.v === tv ? "selected" : ""}>${t.label}</option>`).join("")}
+        ${odd ? `<option value="${tv}" selected>${tv} (already set)</option>` : ""}
+      </select></div>
+  </div>`;
+}
+function slotValue(prefix) {
+  const d = $(prefix + "Date"), t = $(prefix + "Time");
+  if (!d || !t || !d.value || !t.value) return "";
+  return new Date(d.value + "T" + t.value).toISOString();
+}
 
 let toastTimer;
 function toast(msg, isErr) {
@@ -82,12 +112,24 @@ function canSee(v) {
   if (v === "dash" || v === "sla" || v === "team") return false;
   return true;
 }
-const firstAllowed = () => ["dash", "crm", "prod", "del", "life", "pay"].find(canSee) || "noaccess";
+const firstAllowed = () => ["dash", ...BOARDS, "life", "pay"].find(canSee) || "noaccess";
 
+/* optional stages: the job only passes through if the package calls for it */
 function appliesTo(job, st) {
-  if (!st.optional_for) return true;
-  return st.optional_for === "video" ? !!job.has_video : !!job.has_album;
+  switch (st.optional_for) {
+    case "video":  return !!job.has_video;
+    case "album":  return !!job.has_album;
+    case "frame":  return !!job.frame_included;
+    case "pickup": return !!job.has_album || !!job.frame_included;
+    default:       return true;
+  }
 }
+const optionalNote = kind => ({
+  video: "only packages with a video",
+  album: "only packages with an album",
+  frame: "only packages with a frame",
+  pickup: "only jobs with an album or frame to collect"
+}[kind] || "");
 function nextStageFor(job) {
   const f = flow();
   let i = f.findIndex(s => s.name === job.stage);
@@ -158,6 +200,15 @@ function packageNeeded(job, toStage) {
   if (!(st.ordinal >= ordOf("terms_stage") && job.stage_no < ordOf("terms_stage"))) return null;
   const g = packageGaps(job);
   return g.length ? g : null;
+}
+/* money owed, and this move would take the job past the point where that matters.
+   Ordinal-based on purpose: a digital job skips the pickup stage, and must still
+   be stopped on its way to whatever comes after it. */
+function payGateCrossed(job, toStage) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked || bal(job) <= 0) return false;
+  const g = ordOf("pay_gate_stage");
+  return st.ordinal >= g && job.stage_no < g;
 }
 /* what the photographer still owes the studio before the gallery goes out */
 function handoverGaps(job) {
@@ -275,8 +326,7 @@ const A = {
     const firm = thenStage ? slotNeeded(j, thenStage) === "firm" : j.stage_no >= ordOf("shoot_date_from");
     modal(`<h3>Shoot date &amp; time</h3>
       <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
-      <label>When is the shoot?</label>
-      <input class="inp" id="shootAt" type="datetime-local" value="${toLocalInput(j.shoot_at)}">
+      ${slotPicker("shoot", j.shoot_at)}
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveShoot(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">Save${thenStage ? " and move" : ""}</button>
         ${firm ? "" : `<button class="btn" onclick="A.markTBD(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">Client hasn't decided — TBD</button>`}
@@ -284,10 +334,9 @@ const A = {
       ${firm ? `<p class="hint">TBD is not accepted from ${esc(S.settings.shoot_date_from || "Pre-Production")} onward — the date has to be real.</p>` : ""}`);
   },
   async saveShoot(id, thenStage) {
-    const v = $("shootAt").value;
-    if (!v) return toast("Pick a date and time first", true);
+    const iso = slotValue("shoot");
+    if (!iso) return toast("Pick a date and a time first", true);
     A.closeModal();
-    const iso = new Date(v).toISOString();
     if (thenStage) {
       await patch(id, { shoot_at: iso, shoot_tbd: false, stage: thenStage }, "Scheduled and moved to " + thenStage);
     } else {
@@ -351,7 +400,8 @@ const A = {
     const j = S.jobs.find(x => x.id === id);
     modal(`<h3>Contact details</h3><p class="mh">${esc(j.client_name)}</p>
       <label>Phone</label><input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}">
-      <label>Email (optional)</label><input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}">
+      <label>Email (optional)</label><input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}"
+        placeholder="needed before the terms email can go out">
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveContact(${id})">Save</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
@@ -375,8 +425,7 @@ const A = {
         <div><label>Advance received</label>
           <input class="inp" id="bkAdv" type="number" min="1" value="${num(j.amount_received) || ""}" placeholder="required"></div>
       </div>
-      <label style="margin-top:10px">Shoot date &amp; time</label>
-      <input class="inp" id="bkAt" type="datetime-local" value="${toLocalInput(j.shoot_at)}">
+      <div style="margin-top:4px">${slotPicker("bk", j.shoot_at)}</div>
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveBooking(${id},'${esc(to)}',false)">Book it</button>
         <button class="btn" onclick="A.saveBooking(${id},'${esc(to)}',true)">Book with date TBD</button>
@@ -387,15 +436,15 @@ const A = {
   async saveBooking(id, to, tbd) {
     const total = parseFloat($("bkVal").value || "0") || 0;
     const adv = parseFloat($("bkAdv").value || "0") || 0;
-    const at = $("bkAt").value;
+    const at = slotValue("bk");
     if (total <= 0) return toast("The total package value is required", true);
     if (adv <= 0) return toast("Record the advance payment to book this job", true);
     if (adv > total) return toast("The advance cannot be more than the package total", true);
-    if (!tbd && !at) return toast("Pick a date and time, or choose TBD", true);
+    if (!tbd && !at) return toast("Pick a date and a time, or choose TBD", true);
     A.closeModal();
     const f = { stage: to, package_value: total, amount_received: adv };
     if (tbd) { f.shoot_tbd = true; f.shoot_at = null; }
-    else { f.shoot_at = new Date(at).toISOString(); f.shoot_tbd = false; }
+    else { f.shoot_at = at; f.shoot_tbd = false; }
     await patch(id, f, "Booked" + (tbd ? " — date TBD" : " for " + fmtShoot(f.shoot_at)));
   },
 
@@ -410,7 +459,7 @@ const A = {
       return A.bookJob(id, to);
     if (slotNeeded(j, to)) return A.setShoot(id, to);
     if (handoverNeeded(j, to)) return A.handover(id, to);
-    if (to === S.settings.pay_gate_stage && bal(j) > 0 && !override)
+    if (payGateCrossed(j, to) && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed", true);
     await patch(id, { stage: to }, override
       ? "Overridden — delivered with " + rupee(bal(j)) + " owing" : "Moved to " + to);
@@ -444,7 +493,7 @@ const A = {
            <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
            <p class="hint" style="margin-top:6px">${rupee(j.amount_received)} received so far of
              ${rupee(j.package_value)}. The balance can stay outstanding — delivery is still blocked at
-             ${esc(S.settings.pay_gate_stage || "Final Delivery")}.</p>`
+             ${esc(S.settings.pay_gate_stage || "Waiting for Client Pickup")}.</p>`
         : `<div class="alert green" style="margin-top:12px"><b>Fully paid.</b> Nothing to collect.</div>`) : ""}
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveHandover(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
@@ -527,7 +576,7 @@ const A = {
           Save${thenStage ? " and continue" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">This is what goes into the terms email, so it has to be right before
-        the payment link is shared.</p>`);
+        the payment link is shared. An album or a frame also adds a pickup step at the end.</p>`);
     A.pkSync();
   },
   pkSync() {
@@ -561,6 +610,8 @@ const A = {
       return toast("Can't remove the video while the job is in " + optStage("video"), true);
     if (!alb && j.has_album && j.stage === optStage("album"))
       return toast("Can't remove the album while the job is in " + optStage("album"), true);
+    if (!fr && j.frame_included && j.stage === optStage("frame"))
+      return toast("Can't remove the frame while the job is in " + optStage("frame"), true);
 
     A.closeModal();
     await patch(id, {
