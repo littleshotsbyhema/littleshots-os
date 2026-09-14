@@ -2,9 +2,6 @@
    Little Shots Studio OS
    Single-page app on Supabase. All security and all derived state
    live in the database — this file is only the interface.
-
-   app.js   — state, data access, actions
-   views.js — the screens (loaded first)
    =================================================================== */
 
 const SUPABASE_URL = "https://bdadnmwauyarukqvfbvd.supabase.co";
@@ -24,6 +21,8 @@ const MODLABEL = { crm: "CRM", prod: "Production", del: "Delivery", life: "Marke
 const ALLMODS = ["crm", "prod", "del", "life"];
 const LOCATIONS = ["Coimbatore", "Bangalore - MDP", "Bangalore - JP Nagar", "Erode", "Others"];
 const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repeat client", "Walk-in", "Other"];
+const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
+const FRAME_SIZES = ["8 x 12", "12 x 18", "16 x 24", "24 x 36"];
 
 /* ------------------------------------------------------------ utils */
 const $ = id => document.getElementById(id);
@@ -61,7 +60,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Email the terms)/, "$1");
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -138,6 +137,27 @@ function teamFor(stageName) {
   const st = stageByName(stageName);
   const mods = st ? st.modules || [] : [];
   return S.people.filter(p => p.active && (p.is_admin || p.access.some(m => mods.includes(m))));
+}
+/* the stage that only exists for jobs with a video or an album */
+const optStage = kind => (S.stages.find(s => s.optional_for === kind) || {}).name;
+/* what is still missing from the price and the delivery list */
+function packageGaps(job) {
+  const g = [];
+  if (num(job.package_value) <= 0) g.push("the total package value");
+  if (num(job.edited_count) <= 0) g.push("how many edited photos are included");
+  if (job.has_video && !String(job.video_notes || "").trim()) g.push("what the video covers");
+  if (job.has_album && !String(job.album_size || "").trim()) g.push("the album size");
+  if (job.has_album && num(job.album_sheets) <= 0) g.push("the number of album sheets");
+  if (job.frame_included && !String(job.frame_size || "").trim()) g.push("the frame size");
+  return g;
+}
+/* does this move need the package pinned down first? */
+function packageNeeded(job, toStage) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked) return null;
+  if (!(st.ordinal >= ordOf("terms_stage") && job.stage_no < ordOf("terms_stage"))) return null;
+  const g = packageGaps(job);
+  return g.length ? g : null;
 }
 /* must the terms go out before this move? */
 function termsNeeded(job, toStage) {
@@ -266,7 +286,6 @@ const A = {
     await patch(id, f, thenStage ? "Marked TBD and moved to " + thenStage : "Marked TBD");
   },
 
-  /* ---- terms and booking details ---- */
   async previewEmail(id, thenStage) {
     const { data, error } = await sb.functions.invoke("send-package-email",
       { body: { job_id: id, preview: true } });
@@ -331,7 +350,7 @@ const A = {
       <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}</p>
       <div class="f2">
         <div><label>Package total</label>
-          <input class="inp" id="bkVal" type="number" min="0" value="${num(j.package_value)}"></div>
+          <input class="inp" id="bkVal" type="number" min="1" value="${num(j.package_value) || ""}"></div>
         <div><label>Advance received</label>
           <input class="inp" id="bkAdv" type="number" min="1" value="${num(j.amount_received) || ""}" placeholder="required"></div>
       </div>
@@ -348,8 +367,9 @@ const A = {
     const total = parseFloat($("bkVal").value || "0") || 0;
     const adv = parseFloat($("bkAdv").value || "0") || 0;
     const at = $("bkAt").value;
+    if (total <= 0) return toast("The total package value is required", true);
     if (adv <= 0) return toast("Record the advance payment to book this job", true);
-    if (total && adv > total) return toast("The advance cannot be more than the package total", true);
+    if (adv > total) return toast("The advance cannot be more than the package total", true);
     if (!tbd && !at) return toast("Pick a date and time, or choose TBD", true);
     A.closeModal();
     const f = { stage: to, package_value: total, amount_received: adv };
@@ -363,6 +383,7 @@ const A = {
     const j = S.jobs.find(x => x.id === id);
     const st = stageByName(to), bookedOrd = ordOf("booked_stage");
     const crossingIntoBooked = st && !st.is_parked && st.ordinal >= bookedOrd && j.stage_no < bookedOrd;
+    if (packageNeeded(j, to)) return A.editPackage(id, to);
     if (termsNeeded(j, to)) return A.previewEmail(id, to);
     if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
       return A.bookJob(id, to);
@@ -383,33 +404,103 @@ const A = {
     await patch(id, { amount_received: num(j.amount_received) + a },
       bal(j) - a > 0 ? rupee(a) + " recorded · " + rupee(bal(j) - a) + " left" : "Fully paid");
   },
-  editMoney(id) {
+  /* ---- the price and exactly what the client is getting ---- */
+  editPackage(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
-    modal(`<h3>Package value</h3><p class="mh">${esc(j.client_name)}</p>
+    modal(`<h3>Package &amp; delivery details</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage
+        ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>Total package value (required)</label>
+      <input class="inp" id="pkVal" type="number" min="1" value="${num(j.package_value) || ""}" placeholder="e.g. 25000">
+
+      <div class="sec" style="border:0;padding:14px 0 0"><h5>What the client gets</h5>
+
       <div class="f2">
-        <div><label>Total</label><input class="inp" id="mv" type="number" min="0" value="${num(j.package_value)}"></div>
-        <div><label>Received</label><input class="inp" id="mr" type="number" min="0" value="${num(j.amount_received)}"></div>
+        <div><label>Edited photos (required)</label>
+          <input class="inp" id="pkEd" type="number" min="1" value="${num(j.edited_count) || ""}" placeholder="e.g. 60"></div>
+        <div><label>Unedited photos</label>
+          <label class="chk"><input type="checkbox" id="pkUn" ${j.unedited_included ? "checked" : ""}>
+            Unedited / raw photos included</label></div>
       </div>
+
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="pkVid"
+        onchange="A.pkSync()" ${j.has_video ? "checked" : ""}> Video included</label>
+      <div id="pkVidBox" style="margin-top:6px">
+        <input class="inp" id="pkVnote" value="${esc(j.video_notes || "")}"
+          placeholder="What the video covers — e.g. 3 min highlight reel, teaser for reels">
+      </div>
+
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="pkAlb"
+        onchange="A.pkSync()" ${j.has_album ? "checked" : ""}> Album included</label>
+      <div id="pkAlbBox" class="f2" style="margin-top:6px">
+        <div><label>Album size</label>${sizeSelect("pkAlbSize", j.album_size, ALBUM_SIZES)}
+          <div id="pkAlbOtherWrap" style="margin-top:6px">
+            <input class="inp" id="pkAlbOther" placeholder="Type the size"
+              value="${esc(ALBUM_SIZES.includes(j.album_size) ? "" : (j.album_size || ""))}"></div></div>
+        <div><label>Number of sheets</label>
+          <input class="inp" id="pkSheets" type="number" min="1" value="${num(j.album_sheets) || ""}" placeholder="e.g. 20"></div>
+      </div>
+
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="pkFr"
+        onchange="A.pkSync()" ${j.frame_included ? "checked" : ""}> Frame included</label>
+      <div id="pkFrBox" style="margin-top:6px">
+        <label>Frame size</label>${sizeSelect("pkFrSize", j.frame_size, FRAME_SIZES)}
+        <div id="pkFrOtherWrap" style="margin-top:6px">
+          <input class="inp" id="pkFrOther" placeholder="Type the size"
+            value="${esc(FRAME_SIZES.includes(j.frame_size) ? "" : (j.frame_size || ""))}"></div>
+      </div></div>
+
       <div class="acts" style="margin-top:16px">
-        <button class="btn p" onclick="A.saveMoney(${id})">Save</button>
-        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+        <button class="btn p" onclick="A.savePackage(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and continue" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">This is what goes into the terms email, so it has to be right before
+        the payment link is shared.</p>`);
+    A.pkSync();
   },
-  async saveMoney(id) {
-    const v = parseFloat($("mv").value || "0"), r = parseFloat($("mr").value || "0");
-    if (r > v) return toast("Received cannot be more than the total", true);
+  pkSync() {
+    const show = (id, on) => { const e = $(id); if (e) e.style.display = on ? "" : "none"; };
+    const on = id => { const e = $(id); return !!(e && e.checked); };
+    const val = id => { const e = $(id); return e ? e.value : ""; };
+    show("pkVidBox", on("pkVid"));
+    show("pkAlbBox", on("pkAlb"));
+    show("pkFrBox", on("pkFr"));
+    show("pkAlbOtherWrap", on("pkAlb") && val("pkAlbSize") === "Others");
+    show("pkFrOtherWrap", on("pkFr") && val("pkFrSize") === "Others");
+  },
+  async savePackage(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const v = parseFloat($("pkVal").value || "0") || 0;
+    const ed = parseInt($("pkEd").value || "0", 10) || 0;
+    const un = $("pkUn").checked;
+    const vid = $("pkVid").checked, vnote = $("pkVnote").value.trim();
+    const alb = $("pkAlb").checked, sheets = parseInt($("pkSheets").value || "0", 10) || 0;
+    const asize = sizeValue("pkAlbSize", "pkAlbOther");
+    const fr = $("pkFr").checked, fsize = sizeValue("pkFrSize", "pkFrOther");
+
+    if (v <= 0) return toast("The total package value is required", true);
+    if (num(j.amount_received) > v) return toast("They have already paid more than that total", true);
+    if (ed <= 0) return toast("How many edited photos are included?", true);
+    if (vid && !vnote) return toast("Say what the video covers", true);
+    if (alb && !asize) return toast("Pick the album size", true);
+    if (alb && sheets <= 0) return toast("How many sheets in the album?", true);
+    if (fr && !fsize) return toast("Pick the frame size", true);
+    if (!vid && j.has_video && j.stage === optStage("video"))
+      return toast("Can't remove the video while the job is in " + optStage("video"), true);
+    if (!alb && j.has_album && j.stage === optStage("album"))
+      return toast("Can't remove the album while the job is in " + optStage("album"), true);
+
     A.closeModal();
-    await patch(id, { package_value: v, amount_received: r }, "Payment details updated");
+    await patch(id, {
+      package_value: v, edited_count: ed, unedited_included: un,
+      has_video: vid, video_notes: vid ? vnote : null,
+      has_album: alb, album_size: alb ? asize : null, album_sheets: alb ? sheets : null,
+      frame_included: fr, frame_size: fr ? fsize : null
+    }, "Package details saved");
+    if (thenStage) await A.moveTo(id, thenStage);
   },
   async reassign(id, uid) { await patch(id, { owner_id: uid || null }, "Reassigned"); },
   async setJobLoc(id, l) { await patch(id, { location: l }, "Location set to " + l); },
-  async toggleDeliv(id, kind) {
-    const j = S.jobs.find(x => x.id === id);
-    const st = S.stages.find(s => s.optional_for === kind);
-    const f = kind === "video" ? "has_video" : "has_album";
-    if (st && j.stage === st.name && j[f])
-      return toast("Can't remove the " + kind + " while the job is in " + st.name, true);
-    await patch(id, { [f]: !j[f] }, (!j[f] ? kind + " added" : "no " + kind + " — stage skipped"));
-  },
   async ackViewOnly(id) { await patch(id, { view_only_ack: true }, "Logged: link set to view-only"); },
   async addNote(id) {
     const el = $("noteBox"), body = (el && el.value || "").trim();
@@ -527,6 +618,19 @@ async function patch(id, fields, msg) {
   S.busy = false;
   if (error) return fail(error);
   await refresh(msg);
+}
+/* a size dropdown with the studio's standard sizes plus Others */
+function sizeSelect(id, current, list) {
+  const other = !!(current && !list.includes(current));
+  return `<select class="inp" id="${id}" onchange="A.pkSync()">
+    <option value="">Pick a size</option>
+    ${list.map(s => `<option ${s === current ? "selected" : ""}>${esc(s)}</option>`).join("")}
+    <option ${other ? "selected" : ""}>Others</option></select>`;
+}
+function sizeValue(selId, otherId) {
+  const sel = $(selId), oth = $(otherId);
+  const v = sel ? sel.value : "";
+  return v === "Others" ? ((oth && oth.value) || "").trim() : v;
 }
 function modal(inner) {
   $("modalHost").innerHTML = `<div class="modal" onclick="if(event.target===this)A.closeModal()">
