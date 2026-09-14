@@ -25,6 +25,17 @@ const LOCATIONS = ["Coimbatore", "Bangalore - MDP", "Bangalore - JP Nagar", "Ero
 const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repeat client", "Walk-in", "Other"];
 const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
 const FRAME_SIZES = ["8 x 12", "12 x 18", "16 x 24", "24 x 36"];
+const VENUES = ["Studio", "Home", "Outdoor"];
+/* side tracks: work that runs alongside the main line instead of holding it up */
+const TRACKS = [
+  { key: "video", field: "video_stage", label: "Video",
+    applies: j => !!j.has_video, gates: "digital_stage" },
+  { key: "album", field: "album_stage", label: "Album",
+    applies: j => !!j.has_album, gates: "pickup_stage" },
+  { key: "frame", field: "frame_stage", label: "Frame",
+    applies: j => !!j.frame_included, gates: "pickup_stage" }
+];
+const DONE = "Done";
 
 /* ------------------------------------------------------------ utils */
 const $ = id => document.getElementById(id);
@@ -44,7 +55,6 @@ const fmtShoot = iso => {
 const fmtDay = iso => new Date(iso).toLocaleDateString("en-IN",
   { weekday: "long", day: "numeric", month: "long" });
 const isToday = iso => iso && new Date(iso).toDateString() === new Date().toDateString();
-
 const pad = n => String(n).padStart(2, "0");
 /* the studio shoots between 8am and 6pm, on the half hour */
 const TIME_SLOTS = (() => {
@@ -90,16 +100,47 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is still|The frame is still)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
 /* ------------------------------------------------- derived helpers */
 const stageByName = n => S.stages.find(s => s.name === n);
-const flow = () => S.stages.filter(s => !s.is_parked).sort((a, b) => a.ordinal - b.ordinal);
+/* the main line only — track steps live outside it */
+const flow = () => S.stages.filter(s => !s.is_parked && !s.track).sort((a, b) => a.ordinal - b.ordinal);
 const parkedStage = () => (S.stages.find(s => s.is_parked) || {}).name;
-const modStages = k => S.stages.filter(s => (s.modules || []).includes(k) && !s.is_parked)
+const modStages = k => S.stages.filter(s => (s.modules || []).includes(k) && !s.is_parked && !s.track)
   .sort((a, b) => a.ordinal - b.ordinal);
+/* the steps of one side track, in order */
+const trackSteps = t => S.stages.filter(s => s.track === t).sort((a, b) => a.ordinal - b.ordinal);
+const trackDef = k => TRACKS.find(t => t.key === k);
+const trackOf = (job, k) => job[trackDef(k).field] || null;
+const trackRuns = (job, k) => trackDef(k).applies(job);
+const trackDone = (job, k) => !trackRuns(job, k) || trackOf(job, k) === DONE;
+/* which track steps belong on this module's board */
+const modTracks = k => TRACKS.filter(t =>
+  trackSteps(t.key).some(s => (s.modules || []).includes(k)));
+function trackNext(job, k) {
+  const steps = trackSteps(k).map(s => s.name);
+  const at = trackOf(job, k);
+  if (at === DONE) return null;
+  const i = steps.indexOf(at);
+  return i < 0 ? steps[0] : (i + 1 < steps.length ? steps[i + 1] : DONE);
+}
+function trackPrev(job, k) {
+  const steps = trackSteps(k).map(s => s.name);
+  const at = trackOf(job, k);
+  if (at === DONE) return steps[steps.length - 1];
+  const i = steps.indexOf(at);
+  return i > 0 ? steps[i - 1] : null;
+}
+const trackDays = (job, k) => num(job[k + "_days"]);
+function trackSla(job, k) {
+  const st = stageByName(trackOf(job, k));
+  if (!st || st.sla_days == null) return "No SLA";
+  const d = trackDays(job, k);
+  return d > st.sla_days ? "OVERDUE" : d === st.sla_days ? "Due today" : "On track";
+}
 const isAdmin = () => !!(S.me && S.me.is_admin);
 const myMods = () => (S.me ? S.me.access : []);
 const ordOf = key => (stageByName(S.settings[key]) || {}).ordinal || 999;
@@ -180,8 +221,6 @@ function teamFor(stageName) {
   const mods = st ? st.modules || [] : [];
   return S.people.filter(p => p.active && (p.is_admin || p.access.some(m => mods.includes(m))));
 }
-/* the stage that only exists for jobs with a video or an album */
-const optStage = kind => (S.stages.find(s => s.optional_for === kind) || {}).name;
 /* what is still missing from the price and the delivery list */
 function packageGaps(job) {
   const g = [];
@@ -201,15 +240,44 @@ function packageNeeded(job, toStage) {
   const g = packageGaps(job);
   return g.length ? g : null;
 }
-/* money owed, and this move would take the job past the point where that matters.
-   Ordinal-based on purpose: a digital job skips the pickup stage, and must still
-   be stopped on its way to whatever comes after it. */
-function payGateCrossed(job, toStage) {
-  const st = stageByName(toStage);
-  if (!st || st.is_parked || bal(job) <= 0) return false;
-  const g = ordOf("pay_gate_stage");
-  return st.ordinal >= g && job.stage_no < g;
+/* a phone is either ten digits, or an overseas number that starts with + */
+function phoneOk(p) {
+  const s = String(p || "").replace(/[\s\-()]/g, "");
+  return /^\+[0-9]{8,15}$/.test(s) || /^[0-9]{10}$/.test(s);
 }
+/* is this move crossing the stage named by that setting? */
+function crossing(job, toStage, key) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked || st.track) return false;
+  const o = ordOf(key);
+  return st.ordinal >= o && job.stage_no < o;
+}
+const galleryLinkNeeded = (job, to) =>
+  crossing(job, to, "selection_stage") && !String(job.gallery_link || "").trim();
+function editInfoNeeded(job, to) {
+  if (!crossing(job, to, "qc_stage")) return false;
+  return num(job.photos_edited) <= 0 || !String(job.edited_link || "").trim();
+}
+/* a side track that has not caught up yet, and is holding this move */
+function trackBlocking(job, toStage) {
+  for (const t of TRACKS) {
+    if (!crossing(job, toStage, t.gates)) continue;
+    if (!trackDone(job, t.key))
+      return t.label.toLowerCase() + " is still in " + (trackOf(job, t.key) || "its track");
+  }
+  return null;
+}
+/* money owed, and this move would take the job past the point where that matters */
+function payGateCrossed(job, toStage) {
+  const gate = stageByName(S.settings.pay_gate_stage);
+  if (!gate || gate.track) return false;        // the gate sits on a side track instead
+  const st = stageByName(toStage);
+  if (!st || st.is_parked || st.track || bal(job) <= 0) return false;
+  return st.ordinal >= gate.ordinal && job.stage_no < gate.ordinal;
+}
+/* the same block, for a track step such as Album Printing */
+const trackPayGate = (job, toStep) =>
+  toStep === S.settings.pay_gate_stage && bal(job) > 0;
 /* what the photographer still owes the studio before the gallery goes out */
 function handoverGaps(job) {
   const g = [];
@@ -399,7 +467,8 @@ const A = {
   editContact(id) {
     const j = S.jobs.find(x => x.id === id);
     modal(`<h3>Contact details</h3><p class="mh">${esc(j.client_name)}</p>
-      <label>Phone</label><input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}">
+      <label>Phone</label><input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}"
+        placeholder="10 digits, or +44… for overseas">
       <label>Email (optional)</label><input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}"
         placeholder="needed before the terms email can go out">
       <div class="acts" style="margin-top:16px">
@@ -410,6 +479,7 @@ const A = {
     const phone = $("ctPhone").value.trim();
     const email = $("ctEmail").value.trim() || null;   // read before the modal closes
     if (!phone) return toast("A phone number is required", true);
+    if (!phoneOk(phone)) return toast("10 digits, or start with + for an overseas number", true);
     A.closeModal();
     await patch(id, { phone, email }, "Contact updated");
   },
@@ -426,23 +496,41 @@ const A = {
           <input class="inp" id="bkAdv" type="number" min="1" value="${num(j.amount_received) || ""}" placeholder="required"></div>
       </div>
       <div style="margin-top:4px">${slotPicker("bk", j.shoot_at)}</div>
+      <label style="margin-top:10px">Where is the shoot?</label>
+      <select class="inp" id="bkVenue" onchange="A.venueSync()">
+        ${VENUES.map(v => `<option ${v === (j.venue || "Studio") ? "selected" : ""}>${esc(v)}</option>`).join("")}
+      </select>
+      <div id="bkAddrBox" style="margin-top:8px">
+        <label>Address</label>
+        <input class="inp" id="bkAddr" value="${esc(j.venue_address || "")}"
+          placeholder="where the team should turn up"></div>
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveBooking(${id},'${esc(to)}',false)">Book it</button>
         <button class="btn" onclick="A.saveBooking(${id},'${esc(to)}',true)">Book with date TBD</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">An advance is required to book. The date can be TBD for now, but must be confirmed
         before ${esc(S.settings.shoot_date_from || "Pre-Production")}.</p>`);
+    A.venueSync();
+  },
+  venueSync() {
+    const v = $("bkVenue"), box = $("bkAddrBox");
+    if (v && box) box.style.display = v.value === "Studio" ? "none" : "";
   },
   async saveBooking(id, to, tbd) {
     const total = parseFloat($("bkVal").value || "0") || 0;
     const adv = parseFloat($("bkAdv").value || "0") || 0;
     const at = slotValue("bk");
+    const venue = $("bkVenue").value;
+    const addr = $("bkAddr").value.trim();
     if (total <= 0) return toast("The total package value is required", true);
     if (adv <= 0) return toast("Record the advance payment to book this job", true);
     if (adv > total) return toast("The advance cannot be more than the package total", true);
     if (!tbd && !at) return toast("Pick a date and a time, or choose TBD", true);
+    if (venue !== "Studio" && !addr)
+      return toast("Enter the address for a " + venue.toLowerCase() + " shoot", true);
     A.closeModal();
-    const f = { stage: to, package_value: total, amount_received: adv };
+    const f = { stage: to, package_value: total, amount_received: adv,
+                venue, venue_address: venue === "Studio" ? null : addr };
     if (tbd) { f.shoot_tbd = true; f.shoot_at = null; }
     else { f.shoot_at = at; f.shoot_tbd = false; }
     await patch(id, f, "Booked" + (tbd ? " — date TBD" : " for " + fmtShoot(f.shoot_at)));
@@ -459,6 +547,10 @@ const A = {
       return A.bookJob(id, to);
     if (slotNeeded(j, to)) return A.setShoot(id, to);
     if (handoverNeeded(j, to)) return A.handover(id, to);
+    if (galleryLinkNeeded(j, to)) return A.setGallery(id, to);
+    if (editInfoNeeded(j, to)) return A.setEdit(id, to);
+    const held = trackBlocking(j, to);
+    if (held) return toast("Blocked — the " + held, true);
     if (payGateCrossed(j, to) && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed", true);
     await patch(id, { stage: to }, override
@@ -475,6 +567,93 @@ const A = {
     await patch(id, { amount_received: num(j.amount_received) + a },
       bal(j) - a > 0 ? rupee(a) + " recorded · " + rupee(bal(j) - a) + " left" : "Fully paid");
   },
+  /* ---- the client's galleries ---- */
+  setGallery(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Pixieset gallery</h3>
+      <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>Link the client selects from</label>
+      <input class="inp" id="glLink" value="${esc(j.gallery_link || "")}"
+        placeholder="https://littleshots.pixieset.com/…">
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveGallery(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and move" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">The client picks their photos here, so it has to be live before they are asked.</p>`);
+  },
+  async saveGallery(id, thenStage) {
+    const link = $("glLink").value.trim();
+    if (!link) return toast("Paste the Pixieset gallery link", true);
+    A.closeModal();
+    const f = { gallery_link: link };
+    if (thenStage) f.stage = thenStage;
+    await patch(id, f, thenStage ? "Gallery shared · moved to " + thenStage : "Gallery link saved");
+  },
+
+  setEdit(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Edited files</h3>
+      <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>How many files were edited?</label>
+      <input class="inp" id="edCount" type="number" min="1" value="${num(j.photos_edited) || ""}"
+        placeholder="${num(j.edited_count) ? num(j.edited_count) + " were promised" : "e.g. 80"}">
+      <label style="margin-top:10px">Pixieset link for the edited files</label>
+      <input class="inp" id="edLink" value="${esc(j.edited_link || "")}"
+        placeholder="https://littleshots.pixieset.com/…">
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveEdit(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and move" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      ${num(j.edited_count) ? `<p class="hint">The package promises ${j.edited_count} edited photos.</p>` : ""}`);
+  },
+  async saveEdit(id, thenStage) {
+    const n = parseInt($("edCount").value || "0", 10) || 0;
+    const link = $("edLink").value.trim();
+    if (n <= 0) return toast("Enter how many files were edited", true);
+    if (!link) return toast("Paste the Pixieset link for the edited files", true);
+    A.closeModal();
+    const f = { photos_edited: n, edited_link: link };
+    if (thenStage) f.stage = thenStage;
+    await patch(id, f, thenStage ? n + " files · moved to " + thenStage : "Edited files recorded");
+  },
+
+  /* ---- side tracks ---- */
+  async moveTrack(id, key, to, override) {
+    const j = S.jobs.find(x => x.id === id);
+    const target = to || trackNext(j, key);
+    if (!target) return;
+    if (key === "video" && target === "Video QC" && !String(j.video_link || "").trim())
+      return A.setVideoLink(id, target);
+    if (trackPayGate(j, target) && !override)
+      return toast("Blocked — " + rupee(bal(j)) + " still owed before " + target, true);
+    const label = trackDef(key).label;
+    await patch(id, { [trackDef(key).field]: target },
+      label + (target === DONE ? " finished" : " · " + target));
+    if (override) await sb.from("job_activity").insert({
+      job_id: id, action: "payment override: " + label.toLowerCase() + " sent to " + target +
+        " with " + rupee(bal(j)) + " owing", actor_id: S.me.id });
+  },
+  setVideoLink(id, thenStep) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Edited video</h3>
+      <p class="mh">${esc(j.client_name)}${thenStep ? " — needed before " + esc(thenStep) : ""}</p>
+      <label>Pixieset link for the edited video</label>
+      <input class="inp" id="vdLink" value="${esc(j.video_link || "")}"
+        placeholder="https://littleshots.pixieset.com/…">
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveVideoLink(${id},${thenStep ? `'${esc(thenStep)}'` : "null"})">
+          Save${thenStep ? " and move" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+  },
+  async saveVideoLink(id, thenStep) {
+    const link = $("vdLink").value.trim();
+    if (!link) return toast("Paste the Pixieset link for the video", true);
+    A.closeModal();
+    const f = { video_link: link };
+    if (thenStep) f.video_stage = thenStep;
+    await patch(id, f, thenStep ? "Video · " + thenStep : "Video link saved");
+  },
+
   /* ---- handing the shoot over to the studio ---- */
   handover(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
@@ -492,8 +671,8 @@ const A = {
         ? `<label style="margin-top:10px">Payment collected (required)</label>
            <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
            <p class="hint" style="margin-top:6px">${rupee(j.amount_received)} received so far of
-             ${rupee(j.package_value)}. The balance can stay outstanding — delivery is still blocked at
-             ${esc(S.settings.pay_gate_stage || "Waiting for Client Pickup")}.</p>`
+             ${rupee(j.package_value)}. The balance can stay outstanding — printing is blocked at
+             ${esc(S.settings.pay_gate_stage || "Album Printing")}.</p>`
         : `<div class="alert green" style="margin-top:12px"><b>Fully paid.</b> Nothing to collect.</div>`) : ""}
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveHandover(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
@@ -576,7 +755,7 @@ const A = {
           Save${thenStage ? " and continue" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">This is what goes into the terms email, so it has to be right before
-        the payment link is shared. An album or a frame also adds a pickup step at the end.</p>`);
+        the payment link is shared. A video, album or frame each add their own side track.</p>`);
     A.pkSync();
   },
   pkSync() {
@@ -606,12 +785,12 @@ const A = {
     if (alb && !asize) return toast("Pick the album size", true);
     if (alb && sheets <= 0) return toast("How many sheets in the album?", true);
     if (fr && !fsize) return toast("Pick the frame size", true);
-    if (!vid && j.has_video && j.stage === optStage("video"))
-      return toast("Can't remove the video while the job is in " + optStage("video"), true);
-    if (!alb && j.has_album && j.stage === optStage("album"))
-      return toast("Can't remove the album while the job is in " + optStage("album"), true);
-    if (!fr && j.frame_included && j.stage === optStage("frame"))
-      return toast("Can't remove the frame while the job is in " + optStage("frame"), true);
+    /* a track that is already under way cannot simply be taken off the job */
+    for (const [on, key] of [[vid, "video"], [alb, "album"], [fr, "frame"]]) {
+      const at = trackOf(j, key);
+      if (!on && trackRuns(j, key) && at && at !== DONE)
+        return toast("Can't remove the " + key + " — its track is already at " + at, true);
+    }
 
     A.closeModal();
     await patch(id, {
@@ -638,7 +817,7 @@ const A = {
     modal(`<h3>New enquiry</h3><p class="mh">It starts at ${esc(flow()[0].name)}.</p>
       <label>Client name</label><input class="inp" id="njName" placeholder="e.g. Divya &amp; Karthik">
       <div class="f2" style="margin-top:9px">
-        <div><label>Phone (required)</label><input class="inp" id="njPhone" type="tel" placeholder="98765 43210"></div>
+        <div><label>Phone (required)</label><input class="inp" id="njPhone" type="tel" placeholder="10 digits, or +44…"></div>
         <div><label>Email (optional)</label><input class="inp" id="njEmail" type="email" placeholder="optional"></div>
       </div>
       <div class="f2" style="margin-top:9px">
@@ -660,6 +839,7 @@ const A = {
     const name = $("njName").value.trim(), phone = $("njPhone").value.trim();
     if (!name) return toast("Give the client a name", true);
     if (!phone) return toast("A phone number is required", true);
+    if (!phoneOk(phone)) return toast("10 digits, or start with + for an overseas number", true);
     const { error } = await sb.from("jobs").insert({
       client_name: name, phone, email: $("njEmail").value.trim() || null,
       shoot_type: $("njShoot").value,
