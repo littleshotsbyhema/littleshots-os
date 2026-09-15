@@ -14,7 +14,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 /* ------------------------------------------------------------ state */
 const S = {
   session: null, me: null, stages: [], settings: {}, jobs: [], children: [],
-  people: [], types: [], typeRows: [],
+  people: [], types: [], typeRows: [], payments: [],
   view: "crm", loc: "All", openId: null, busy: false, archiveTab: "leads"
 };
 
@@ -27,6 +27,11 @@ const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repe
 const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
 const FRAME_SIZES = ["8 x 12", "12 x 18", "16 x 24", "24 x 36"];
 const VENUES = ["Studio", "Home", "Outdoor"];
+/* How the money arrived. Everything but cash leaves a trail somewhere, and
+   UPI leads the list so the evidence fields are in front of you by default —
+   choosing Cash becomes a deliberate act rather than an accident. */
+const PAY_METHODS = ["UPI", "Cash", "Bank transfer", "Card", "Cheque"];
+const needsProof = m => m !== "Cash";
 /* work that runs in parallel becomes a child process with a life of its own */
 const KINDS = [
   { key: "video", label: "Video", mark: "▶", module: "post",
@@ -108,7 +113,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -264,6 +269,41 @@ const galleryLinkNeeded = (job, to) =>
 function editInfoNeeded(job, to) {
   if (!crossing(job, to, "qc_stage")) return false;
   return num(job.photos_edited) <= 0 || !String(job.edited_link || "").trim();
+}
+/* the terms go out by email, so the address comes before anything else */
+function emailNeeded(job, toStage) {
+  const st = stageByName(toStage);
+  if (!st || st.is_parked || st.track) return false;
+  const o = ordOf("terms_stage");
+  return st.ordinal >= o && job.stage_no < o && !String(job.email || "").trim();
+}
+/* money the job claims, against money with a record behind it */
+const recorded = j => num(j.recorded_payments);
+const payGap = j => Math.max(0, num(j.amount_received) - recorded(j));
+/* a phone screenshot is several megabytes of nothing — send a sensible one */
+async function shrinkImage(file, max = 1600, quality = 0.82) {
+  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type)) return file;   // leave HEIC and PDF alone
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", quality));
+    if (blob && blob.size < file.size) return new File([blob], "proof.jpg", { type: "image/jpeg" });
+  } catch (e) { /* an image we can't decode still uploads as it is */ }
+  return file;
+}
+async function uploadProof(jobId, file) {
+  const small = await shrinkImage(file);
+  const ext = (small.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5);
+  const path = "job-" + jobId + "/" + Date.now() + "-" +
+    Math.random().toString(36).slice(2, 8) + "." + (ext || "jpg");
+  const { error } = await sb.storage.from("payment-proofs")
+    .upload(path, small, { contentType: small.type || "image/jpeg" });
+  if (error) throw error;
+  return path;
 }
 /* the shoot's file list, and the files the client chose out of it */
 const manifestOf = job => job.file_manifest || [];
@@ -509,24 +549,32 @@ const A = {
     await loadReference(); render(); toast("Brochure updated for " + name);
   },
 
-  editContact(id) {
+  editContact(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
-    modal(`<h3>Contact details</h3><p class="mh">${esc(j.client_name)}</p>
+    const must = !!thenStage;
+    modal(`<h3>Contact details</h3>
+      <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
       <label>Phone</label><input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}"
         placeholder="10 digits, or +44… for overseas">
-      <label>Email (optional)</label><input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}"
-        placeholder="needed before the terms email can go out">
+      <label>Email${must ? " (required)" : " (optional)"}</label>
+      <input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}"
+        placeholder="the terms and booking details are sent here">
       <div class="acts" style="margin-top:16px">
-        <button class="btn p" onclick="A.saveContact(${id})">Save</button>
-        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+        <button class="btn p" onclick="A.saveContact(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and continue" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      ${must ? `<p class="hint">${esc(thenStage)} sends the client their terms and booking
+        details, so there has to be somewhere to send them.</p>` : ""}`);
   },
-  async saveContact(id) {
+  async saveContact(id, thenStage) {
     const phone = $("ctPhone").value.trim();
     const email = $("ctEmail").value.trim() || null;   // read before the modal closes
     if (!phone) return toast("A phone number is required", true);
     if (!phoneOk(phone)) return toast("10 digits, or start with + for an overseas number", true);
+    if (thenStage && !email) return toast("An email address is needed before " + thenStage, true);
     A.closeModal();
     await patch(id, { phone, email }, "Contact updated");
+    if (thenStage) await A.moveTo(id, thenStage);
   },
   async setType(id, t) { await patch(id, { shoot_type: t }, "Shoot type set to " + t); },
 
@@ -549,19 +597,24 @@ const A = {
         <label>Address</label>
         <input class="inp" id="bkAddr" value="${esc(j.venue_address || "")}"
           placeholder="where the team should turn up"></div>
+      <label style="margin-top:10px">How did the advance come in?</label>
+      <select class="inp" id="bkMethod" onchange="A.paySync('bk')">
+        ${PAY_METHODS.map(m => `<option>${esc(m)}</option>`).join("")}</select>
+      ${proofFields("bk")}
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveBooking(${id},'${esc(to)}',false)">Book it</button>
         <button class="btn" onclick="A.saveBooking(${id},'${esc(to)}',true)">Book with date TBD</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">An advance is required to book. The date can be TBD for now, but must be confirmed
         before ${esc(S.settings.shoot_date_from || "Pre-Production")}.</p>`);
-    A.venueSync();
+    A.venueSync(); A.paySync("bk");
   },
   venueSync() {
     const v = $("bkVenue"), box = $("bkAddrBox");
     if (v && box) box.style.display = v.value === "Studio" ? "none" : "";
   },
   async saveBooking(id, to, tbd) {
+    const j = S.jobs.find(x => x.id === id);
     const total = parseFloat($("bkVal").value || "0") || 0;
     const adv = parseFloat($("bkAdv").value || "0") || 0;
     const at = slotValue("bk");
@@ -573,6 +626,23 @@ const A = {
     if (!tbd && !at) return toast("Pick a date and a time, or choose TBD", true);
     if (venue !== "Studio" && !addr)
       return toast("Enter the address for a " + venue.toLowerCase() + " shoot", true);
+    const method = ($("bkMethod") || {}).value || "Cash";
+    const reference = ($("bkRef") || {}).value ? $("bkRef").value.trim() : "";
+    const file = (($("bkFile") || {}).files || [])[0];
+    if (needsProof(method) && !reference && !file)
+      return toast("A " + method + " advance needs a reference number or a screenshot", true);
+    /* the advance is money too — give it a record of its own */
+    const already = num(j.amount_received);
+    if (adv > already) {
+      try {
+        const proof_path = file ? await uploadProof(id, file) : null;
+        const { error } = await sb.from("job_payments").insert({
+          job_id: id, amount: adv - already, method, reference: reference || null,
+          proof_path, note: "booking advance", recorded_by: S.me.id
+        });
+        if (error) throw error;
+      } catch (e) { return fail(e); }
+    }
     A.closeModal();
     const f = { stage: to, package_value: total, amount_received: adv,
                 venue, venue_address: venue === "Studio" ? null : addr };
@@ -586,6 +656,8 @@ const A = {
     const j = S.jobs.find(x => x.id === id);
     const st = stageByName(to), bookedOrd = ordOf("booked_stage");
     const crossingIntoBooked = st && !st.is_parked && st.ordinal >= bookedOrd && j.stage_no < bookedOrd;
+    /* the address first — the package is no use if the terms have nowhere to go */
+    if (emailNeeded(j, to)) return A.editContact(id, to);
     if (packageNeeded(j, to)) return A.editPackage(id, to);
     if (termsNeeded(j, to)) return A.previewEmail(id, to);
     if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
@@ -609,14 +681,88 @@ const A = {
     if (override) await sb.from("job_activity").insert({
       job_id: id, action: "payment override: delivered with " + rupee(bal(j)) + " owing", actor_id: S.me.id });
   },
-  async recordPay(id, amt) {
+  /* ---- money in, with something behind it ---- */
+  /* the gap case: money the job already counts, but with no record behind it */
+  logPast(id) { A.recordPay(id, payGap(S.jobs.find(x => x.id === id)), true); },
+  recordPay(id, amt, coverGap) {
     const j = S.jobs.find(x => x.id === id);
-    let a = amt;
-    if (a === undefined) { const el = $("payBox"); a = parseFloat((el && el.value) || "0"); }
-    if (!a || a <= 0) return toast("Enter an amount first", true);
-    a = Math.min(a, bal(j));
-    await patch(id, { amount_received: num(j.amount_received) + a },
-      bal(j) - a > 0 ? rupee(a) + " recorded · " + rupee(bal(j) - a) + " left" : "Fully paid");
+    const cap = coverGap ? payGap(j) : bal(j);
+    modal(`<h3>${coverGap ? "Add a missing record" : "Record a payment"}</h3>
+      <p class="mh">${esc(j.client_name)} · ${coverGap
+        ? rupee(cap) + " of what is already counted has no record"
+        : rupee(cap) + " outstanding of " + rupee(j.package_value)}</p>
+      ${coverGap ? `<div class="alert grey">This money is already in the job's total. Filling this
+        in only records how it arrived — it will not be counted twice.</div>` : ""}
+      <div class="f2">
+        <div><label>Amount received</label>
+          <input class="inp" id="pyAmt" type="number" min="1" max="${cap}"
+            value="${amt ? num(amt) : ""}" placeholder="${rupee(cap).slice(1)}"></div>
+        <div><label>Date received</label>
+          <input class="inp" id="pyDate" type="date" value="${dateOf(new Date().toISOString())}"
+            max="${dateOf(new Date().toISOString())}"></div>
+      </div>
+      <label style="margin-top:10px">How did it come in?</label>
+      <select class="inp" id="pyMethod" onchange="A.paySync()">
+        ${PAY_METHODS.map(m => `<option>${esc(m)}</option>`).join("")}</select>
+      ${proofFields("py")}
+      <label style="margin-top:10px">Note (optional)</label>
+      <input class="inp" id="pyNote" placeholder="e.g. collected at the shoot by Kavitha">
+      <div id="pyMsg"></div>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="pySave" onclick="A.savePayment(${id},${coverGap ? "true" : "false"})">
+          ${coverGap ? "Save the record" : "Record it"}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">A screenshot is worth keeping, but it is the reference number that matches
+        your bank statement. Cash needs neither.</p>`);
+    A.paySync();
+  },
+  paySync(prefix) {
+    const p = prefix || "py";
+    const sel = $(p + "Method"), box = $(p + "Proof");
+    if (!sel || !box) return;
+    box.style.display = needsProof(sel.value) ? "" : "none";
+  },
+  async savePayment(id, coverGap) {
+    const j = S.jobs.find(x => x.id === id);
+    const b = coverGap ? payGap(j) : bal(j);
+    const amount = parseFloat($("pyAmt").value || "0") || 0;
+    const on = $("pyDate").value;
+    const method = $("pyMethod").value;
+    const reference = $("pyRef").value.trim();
+    const note = $("pyNote").value.trim();
+    const file = ($("pyFile").files || [])[0];
+
+    if (amount <= 0) return toast("Enter the amount received", true);
+    if (amount > b) return toast("That is more than the " + rupee(b) +
+      (coverGap ? " that is missing a record" : " outstanding"), true);
+    if (!on) return toast("Pick the date it came in", true);
+    if (needsProof(method) && !reference && !file)
+      return toast("A " + method + " payment needs a reference number or a screenshot", true);
+
+    const btn = $("pySave");
+    if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+    try {
+      const proof_path = file ? await uploadProof(id, file) : null;
+      const { error } = await sb.from("job_payments").insert({
+        job_id: id, amount, method, reference: reference || null,
+        proof_path, note: note || null, received_on: on, recorded_by: S.me.id
+      });
+      if (error) throw error;
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = "Record it"; }
+      return fail(e);
+    }
+    A.closeModal();
+    /* covering a gap only writes the record — the total already counts that money */
+    if (coverGap) return refresh(rupee(amount) + " now has a record behind it");
+    /* the record is in; only now does the job's total move */
+    await patch(id, { amount_received: num(j.amount_received) + amount },
+      b - amount > 0 ? rupee(amount) + " recorded · " + rupee(b - amount) + " left" : "Fully paid");
+  },
+  async openProof(path) {
+    const { data, error } = await sb.storage.from("payment-proofs").createSignedUrl(path, 300);
+    if (error || !data) return fail(error || new Error("That file could not be opened"));
+    window.open(data.signedUrl, "_blank", "noopener");
   },
   /* ---- the client's galleries ---- */
   setGallery(id, thenStage) {
@@ -827,6 +973,10 @@ const A = {
       ${thenStage ? (b > 0
         ? `<label style="margin-top:10px">Payment collected (required)</label>
            <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
+           <label style="margin-top:10px">How did it come in?</label>
+           <select class="inp" id="hoMethod" onchange="A.paySync('ho')">
+             ${PAY_METHODS.map(m => `<option>${esc(m)}</option>`).join("")}</select>
+           ${proofFields("ho")}
            <p class="hint" style="margin-top:6px">${rupee(j.amount_received)} received so far of
              ${rupee(j.package_value)}. The balance can stay outstanding — printing is blocked at
              ${esc(S.settings.pay_gate_stage || "Album Printing")}.</p>`
@@ -837,7 +987,7 @@ const A = {
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">The file names are what the client picks from, so paste them if you can —
         a bare count still works, but then nothing they send can be checked.</p>`);
-    A.hoCount();
+    A.hoCount(); A.paySync("ho");
   },
   /* the pasted list speaks for how many files were taken */
   hoCount() {
@@ -854,6 +1004,9 @@ const A = {
     const files = manifest.length || (parseInt($("hoFiles").value || "0", 10) || 0);
     const payEl = $("hoPay");
     const pay = payEl ? (parseFloat(payEl.value || "0") || 0) : 0;
+    const method = ($("hoMethod") || {}).value || "Cash";
+    const reference = ($("hoRef") || {}).value ? $("hoRef").value.trim() : "";
+    const file = (($("hoFile") || {}).files || [])[0];
     const b = bal(j);
 
     if (!backup) return toast("Say where the shoot was backed up", true);
@@ -861,6 +1014,19 @@ const A = {
     if (thenStage && b > 0) {
       if (pay <= 0) return toast("Record the payment collected at the shoot", true);
       if (pay > b) return toast("That is more than the " + rupee(b) + " outstanding", true);
+      if (needsProof(method) && !reference && !file)
+        return toast("A " + method + " payment needs a reference number or a screenshot", true);
+    }
+    /* the money gets its own record before the job's total moves */
+    if (pay > 0) {
+      try {
+        const proof_path = file ? await uploadProof(id, file) : null;
+        const { error } = await sb.from("job_payments").insert({
+          job_id: id, amount: pay, method, reference: reference || null,
+          proof_path, note: "collected at the shoot", recorded_by: S.me.id
+        });
+        if (error) throw error;
+      } catch (e) { return fail(e); }
     }
     A.closeModal();
     const f = { backup_location: backup, files_shot: files, file_manifest: manifest };
@@ -1088,6 +1254,16 @@ async function patch(id, fields, msg) {
   S.busy = false;
   if (error) return fail(error);
   await refresh(msg);
+}
+/* the reference and the screenshot, shared by the payment form and the handover */
+function proofFields(prefix) {
+  return `<div id="${prefix}Proof">
+    <label style="margin-top:10px">Reference number</label>
+    <input class="inp" id="${prefix}Ref" placeholder="UPI transaction ID, bank reference or cheque number">
+    <label style="margin-top:10px">Screenshot</label>
+    <input class="inp" id="${prefix}File" type="file" accept="image/*,application/pdf">
+    <p class="hint" style="margin-top:6px">Either one will do. Photos are shrunk before they are stored.</p>
+  </div>`;
 }
 /* a size dropdown with the studio's standard sizes plus Others */
 function sizeSelect(id, current, list) {
