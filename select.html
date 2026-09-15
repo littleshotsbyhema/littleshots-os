@@ -26,28 +26,21 @@
   .note.red{background:#fdeeec;border:1px solid #f4cfca;color:var(--red)}
   .note.green{background:#eef7f1;border:1px solid #cfe6d8;color:var(--green)}
   label.f{display:block;font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:5px}
-  input,textarea{width:100%;font:inherit;font-size:15px;padding:11px 12px;border:1px solid var(--line);
-    border-radius:10px;background:#fff;color:var(--ink)}
-  input:focus,textarea:focus{outline:none;border-color:var(--rose)}
-  textarea{min-height:88px;resize:vertical}
+  textarea{width:100%;font:inherit;font-size:16px;padding:12px;border:1px solid var(--line);
+    border-radius:10px;background:#fff;color:var(--ink);min-height:190px;resize:vertical;
+    line-height:1.7}
+  textarea:focus{outline:none;border-color:var(--rose)}
   .btn{font:inherit;font-size:14px;font-weight:650;padding:10px 15px;border-radius:10px;
     border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
-  .btn:hover{border-color:var(--rose);color:var(--rose)}
   .btn.p{background:var(--rose);border-color:var(--rose);color:#fff}
-  .btn.p:hover{background:var(--rose-d);color:#fff}
+  .btn.p:hover{background:var(--rose-d)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
   .btn.p:disabled:hover{background:var(--rose)}
   .gallery{display:block;text-align:center;padding:13px;border-radius:11px;background:var(--rose);
     color:#fff;font-weight:700;text-decoration:none;margin-bottom:14px}
   .gallery:hover{background:var(--rose-d)}
-  .list{max-height:44vh;overflow-y:auto;border:1px solid var(--line);border-radius:11px;margin-top:11px}
-  .row{display:flex;align-items:center;gap:11px;padding:11px 13px;border-bottom:1px solid var(--line);
-    cursor:pointer;font-size:14.5px}
-  .row:last-child{border-bottom:0}
-  .row.on{background:#fdf4f7}
-  .row input{width:19px;height:19px;flex:0 0 auto;accent-color:var(--rose);cursor:pointer}
-  .row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .none{padding:22px;text-align:center;color:var(--ink-soft);font-size:14px}
+  .steps{margin:0 0 16px;padding-left:19px;color:var(--ink-soft);font-size:13.5px}
+  .steps li{margin-bottom:4px}
   .bar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);
     padding:13px 16px;box-shadow:0 -3px 14px rgba(43,33,38,.07)}
   .bar .in{max-width:660px;margin:0 auto;display:flex;align-items:center;gap:13px}
@@ -61,7 +54,7 @@
 </head>
 <body>
 <div class="wrap" id="root">
-  <div class="card"><div class="none">Loading your gallery…</div></div>
+  <div class="card"><div style="padding:22px;text-align:center;color:#8a7d84">Loading…</div></div>
 </div>
 
 <script>
@@ -82,12 +75,18 @@ async function call(fn, body) {
   return r.json();
 }
 
-const S = { files: [], picked: new Set(), promised: 0, filter: "" };
+const S = { promised: 0 };
 
-/* a pasted list may be commas, new lines, or one long dictated line */
-const parsePaste = t => String(t || "").split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
-/* clients rarely type the extension, and case wanders */
-const key = f => String(f).toLowerCase().replace(/\.[a-z0-9]+$/, "");
+/* a list may be commas, new lines, or one long dictated line */
+const parseList = t => {
+  const seen = new Set();
+  return String(t || "").split(/[\s,;]+/).map(x => x.trim()).filter(x => {
+    if (!x) return false;
+    const k = x.toLowerCase();
+    if (seen.has(k)) return false;          // the same photo twice is still one photo
+    seen.add(k); return true;
+  });
+};
 
 function stop(title, body, tone) {
   $("root").innerHTML = `<div class="logo">LS</div><h1>${esc(title)}</h1>
@@ -105,14 +104,12 @@ async function boot() {
   if (!d || d.error) return stop("This link isn't working", esc((d && d.error) ||
     "Please ask the studio for a new one."));
 
-  S.files = d.files || [];
   S.promised = Number(d.edited_count) || 0;
-  (d.chosen || []).forEach(f => S.picked.add(f));
 
   if (!d.open) {
+    const n = (d.chosen || []).length;
     return stop("Your selection is in",
-      `Thank you — we have your <b>${(d.chosen || []).length}</b> photo${
-        (d.chosen || []).length === 1 ? "" : "s"} and editing is under way.
+      `Thank you — we have your <b>${n}</b> photo${n === 1 ? "" : "s"} and editing is under way.
        <br><br>Need to change something? Just message the studio and we'll reopen this for you.`,
       "green");
   }
@@ -129,20 +126,20 @@ function paint(d) {
     ${d.gallery_link ? `<a class="gallery" href="${esc(d.gallery_link)}"
       target="_blank" rel="noreferrer noopener">Open your gallery ↗</a>` : ""}
 
-    <div class="card">
-      <label class="f" for="q">Tick the photos you'd like edited</label>
-      <input id="q" type="search" placeholder="Search a file name, e.g. 1234"
-        autocomplete="off" oninput="onFilter(this.value)">
-      <div class="list" id="list"></div>
-      <p class="hint" id="tally"></p>
-    </div>
+    <ol class="steps">
+      <li>Open your gallery and look through the photos.</li>
+      <li>Note the file name under each one you'd like edited.</li>
+      <li>Type or paste them below and send it in.</li>
+    </ol>
 
     <div class="card">
-      <label class="f" for="paste">Or paste your list</label>
-      <textarea id="paste" placeholder="IMG_1234, IMG_1240, IMG_1255…"></textarea>
-      <div style="margin-top:10px"><button class="btn" onclick="addPaste()">Add these</button></div>
-      <div id="pasteMsg"></div>
-      <p class="hint">Commas, spaces or one per line — all fine.</p>
+      <label class="f" for="list">The photos you'd like edited</label>
+      <textarea id="list" inputmode="text" autocapitalize="off" autocomplete="off"
+        spellcheck="false" oninput="tally()"
+        placeholder="IMG_1234&#10;IMG_1240&#10;IMG_1255">${esc((d.chosen || []).join("\n"))}</textarea>
+      <p class="hint">One per line, or separated by commas — whichever is easier.
+        Repeats are counted once.</p>
+      <div id="msg"></div>
     </div>
 
     <p class="foot">Little Shots by Hema</p>
@@ -151,78 +148,40 @@ function paint(d) {
       <div class="count"><span id="n">0</span><small id="nSub"></small></div>
       <button class="btn p" id="send" onclick="send()">Send to the studio</button>
     </div></div>`;
-  drawList(); tally();
-}
-
-function drawList() {
-  const q = S.filter.toLowerCase();
-  const show = q ? S.files.filter(f => f.toLowerCase().includes(q)) : S.files;
-  $("list").innerHTML = show.length
-    ? show.map(f => `<label class="row ${S.picked.has(f) ? "on" : ""}">
-        <input type="checkbox" ${S.picked.has(f) ? "checked" : ""}
-          onchange="toggle(${JSON.stringify(f).replace(/"/g, "&quot;")},this.checked)">
-        <span>${esc(f)}</span></label>`).join("")
-    : `<div class="none">Nothing matches “${esc(S.filter)}”</div>`;
-}
-function onFilter(v) { S.filter = v; drawList(); }
-function toggle(f, on) {
-  on ? S.picked.add(f) : S.picked.delete(f);
-  drawList(); tally();
-}
-
-function addPaste() {
-  const names = parsePaste($("paste").value);
-  if (!names.length) return;
-  /* match on the bare name so IMG_1234, img_1234.jpg and 1234.JPG all land */
-  const byKey = new Map(S.files.map(f => [key(f), f]));
-  const missed = [];
-  names.forEach(n => {
-    const hit = byKey.get(key(n)) ||
-      (S.files.length ? null : n);          // no file list on record: take it as given
-    if (hit) S.picked.add(hit); else missed.push(n);
-  });
-  $("paste").value = "";
-  $("pasteMsg").innerHTML = missed.length
-    ? `<div class="note amber" style="margin:11px 0 0"><b>We couldn't find ${missed.length}
-       of those:</b> ${esc(missed.slice(0, 12).join(", "))}${missed.length > 12 ? "…" : ""}.
-       Check the spelling against your gallery.</div>`
-    : `<div class="note green" style="margin:11px 0 0">Added — ${names.length}
-       photo${names.length === 1 ? "" : "s"} ticked below.</div>`;
-  drawList(); tally();
+  tally();
 }
 
 function tally() {
-  const n = S.picked.size, over = S.promised ? n - S.promised : 0;
+  const n = parseList($("list").value).length;
+  const over = S.promised ? n - S.promised : 0;
   $("n").textContent = S.promised ? `${n} of ${S.promised}` : String(n);
   const sub = $("nSub");
   sub.className = over > 0 ? "over" : "";
-  sub.textContent = !n ? "nothing picked yet"
+  sub.textContent = !n ? "nothing listed yet"
     : over > 0 ? over + " over your package"
     : over < 0 ? Math.abs(over) + " still to choose"
     : "that's the lot";
   $("send").disabled = !n;
-  $("tally").textContent = n
-    ? n + " ticked" + (S.filter ? " · showing matches for “" + S.filter + "”" : "")
-    : "Nothing ticked yet.";
 }
 
 async function send() {
+  const files = parseList($("list").value);
+  if (!files.length) return;
   const b = $("send");
   b.disabled = true; b.textContent = "Sending…";
-  const r = await call("selection-submit", { token: TOKEN, files: [...S.picked] });
+  const r = await call("selection-submit", { token: TOKEN, files });
   if (!r || r.error) {
     b.disabled = false; b.textContent = "Send to the studio";
-    return stopInline((r && r.error) || "That didn't go through. Please try again.");
+    const host = $("msg");
+    if (host) host.innerHTML = `<div class="note red" style="margin:11px 0 0">${
+      esc(r && r.error || "That didn't go through. Please try again.")}</div>`;
+    return;
   }
   stop("Thank you — that's with us",
     `We have your <b>${r.count}</b> photo${r.count === 1 ? "" : "s"} and editing starts now.` +
     (r.over > 0 ? `<br><br>That's ${r.over} more than your package includes — the studio will
        be in touch about the extras.` : ""),
     "green");
-}
-function stopInline(msg) {
-  const host = $("pasteMsg");
-  if (host) host.innerHTML = `<div class="note red" style="margin:11px 0 0">${esc(msg)}</div>`;
 }
 
 boot();
