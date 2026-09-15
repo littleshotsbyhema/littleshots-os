@@ -486,12 +486,9 @@ function handoverSection(j) {
     <div class="slot ${done ? "set" : past ? "missing" : ""}">
       <h6>${done ? "✓ Backed up · " + files + " files" : "Backup not recorded"}</h6>
       <p>${done
-        ? "Kept at <b>" + esc(has) + "</b>." + (manifestOf(j).length
-          ? " Every file is named, so the client's picks can be checked."
-          : ` <span style="color:var(--amber)">Only a count — paste the file names and their
-              selection can be checked against the shoot.</span>`)
+        ? "Kept at <b>" + esc(has) + "</b>."
         : "Needed before " + esc(S.settings.gallery_stage || "Client Gallery Ready") +
-          " — where the files are backed up, and the list of files taken."}</p>
+          " — where the files are backed up, and how many were taken."}</p>
       <div class="acts" style="margin-top:10px">
         <button class="btn ${done ? "sm" : "p sm"}" onclick="A.handover(${j.id})">
           ${done ? "Edit" : "Record it"}</button></div>
@@ -503,7 +500,6 @@ function selectionSection(j) {
   const selOrd = ordOf("selection_stage");
   if (archived(j) || j.stage_no < selOrd) return "";     // the gallery isn't out yet
   const picked = chosenOf(j), inHand = selectionIn(j), over = selectionOver(j);
-  const held = manifestOf(j).length;
   const live = j.stage_no === selOrd && j.selection_open;
   const box = inHand
     ? `<div class="slot set"><h6>✓ ${picked.length} photo${picked.length === 1 ? "" : "s"} chosen</h6>
@@ -513,10 +509,8 @@ function selectionSection(j) {
             bill the extras or trim it with them.</b>` : ""}</p></div>`
     : live
     ? `<div class="slot"><h6>Waiting on the client</h6>
-        <p>Their link is live. They tick their photos and it lands here by itself —
-          the job moves on to ${esc(nextStageFor(j) || "editing")} the moment they send it.
-          ${held ? held + " files are on the link." : `<span style="color:var(--amber)">No file list
-            was recorded for this shoot, so nothing they send can be checked.</span>`}</p></div>`
+        <p>Their link is live. They list their photos and it lands here by itself —
+          the job moves on to ${esc(nextStageFor(j) || "editing")} the moment they send it.</p></div>`
     : `<div class="slot missing"><h6>Nothing recorded</h6>
         <p>This job moved past the selection without one on file.</p></div>`;
   return `<div class="sec"><h5>Client selection</h5>${box}
@@ -744,8 +738,7 @@ function detailSection(j) {
       ].filter(Boolean).join(" · ")}
       <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">set in Package &amp; delivery details above</div></dd>
     ${j.backup_location || num(j.files_shot) ? `<dt>Shoot files</dt><dd>${num(j.files_shot)
-        ? j.files_shot + " files" : "count not recorded"}${manifestOf(j).length
-        ? ' <span class="pill blue">named</span>' : ""}${j.backup_location
+        ? j.files_shot + " files" : "count not recorded"}${j.backup_location
         ? ' <span style="color:var(--ink-soft)">· ' + esc(j.backup_location) + "</span>" : ""}</dd>` : ""}
     <dt>Days in stage</dt><dd>${j.days_in_stage}${j.sla_days == null ? " · no SLA" : " of " + j.sla_days + " allowed"}</dd>
     <dt>Stage owner</dt><dd>${esc(j.stage_responsible)}</dd>
@@ -946,6 +939,15 @@ function slaView() {
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
       <textarea style="min-height:170px" onchange="A.setSetting('email_body',this.value)">${esc(S.settings.email_body || "")}</textarea>
       <p class="hint">Sent through the studio Gmail account. Replies go wherever the reply-to says.</p></div>
+    <div class="panel"><h3>Selection email</h3>
+      <p class="ph">Sent from the job drawer to ask the client for their picks.
+        {{client_name}}, {{shoot_type}}, {{edited_count}} and {{selection_link}} are filled in.
+        The link must be in there somewhere.</p>
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Subject</label>
+      <input class="inp" value="${esc(S.settings.selection_subject || "")}" onchange="A.setSetting('selection_subject',this.value)">
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
+      <textarea style="min-height:170px" onchange="A.setSetting('selection_body',this.value)">${esc(S.settings.selection_body || "")}</textarea>
+      <p class="hint">Goes out from the same studio Gmail, with no attachments.</p></div>
     <div class="panel"><h3>SLA breach email</h3><p class="ph">Daily summary to the founder.</p>
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Send to</label>
       <input class="inp" value="${esc(S.settings.alert_to || "")}" onchange="A.setSetting('alert_to',this.value)">
