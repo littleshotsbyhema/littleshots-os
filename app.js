@@ -27,8 +27,8 @@ const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repe
 const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
 const FRAME_SIZES = ["8 x 12", "12 x 18", "16 x 24", "24 x 36"];
 const VENUES = ["Studio", "Home", "Outdoor"];
-/* How the money arrived. Everything but cash leaves a trail somewhere, and
-   UPI leads the list so the evidence fields are in front of you by default —
+/* How the money arrived. Everything but cash leaves a screenshot behind, and
+   UPI leads the list so the evidence field is in front of you by default —
    choosing Cash becomes a deliberate act rather than an accident. */
 const PAY_METHODS = ["UPI", "Cash", "Bank transfer", "Card", "Cheque"];
 const needsProof = m => m !== "Cash";
@@ -113,7 +113,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -314,7 +314,7 @@ const selectionOver = job => Math.max(0, chosenOf(job).length - num(job.edited_c
 const parseFiles = t => String(t || "").split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
 /* clients rarely type the extension, and case wanders */
 const fileKey = f => String(f).toLowerCase().replace(/\.[a-z0-9]+$/, "");
-/* match what was pasted against the shoot, and say what didn't land */
+/* match what was pasted against the shoot, when we happen to hold a list */
 function matchFiles(job, names) {
   const list = manifestOf(job);
   if (!list.length) return { hits: names.slice(), missed: [] };
@@ -362,7 +362,7 @@ const childPayGate = (job, toStep) =>
 function handoverGaps(job) {
   const g = [];
   if (!String(job.backup_location || "").trim()) g.push("where the shoot was backed up");
-  if (!manifestOf(job).length && num(job.files_shot) <= 0) g.push("the list of files from the shoot");
+  if (num(job.files_shot) <= 0) g.push("how many files were taken");
   if (bal(job) > 0) g.push("the payment collected at the shoot");
   return g;
 }
@@ -627,18 +627,17 @@ const A = {
     if (venue !== "Studio" && !addr)
       return toast("Enter the address for a " + venue.toLowerCase() + " shoot", true);
     const method = ($("bkMethod") || {}).value || "Cash";
-    const reference = ($("bkRef") || {}).value ? $("bkRef").value.trim() : "";
     const file = (($("bkFile") || {}).files || [])[0];
-    if (needsProof(method) && !reference && !file)
-      return toast("A " + method + " advance needs a reference number or a screenshot", true);
+    if (needsProof(method) && !file)
+      return toast("A " + method + " advance needs a screenshot", true);
     /* the advance is money too — give it a record of its own */
     const already = num(j.amount_received);
     if (adv > already) {
       try {
         const proof_path = file ? await uploadProof(id, file) : null;
         const { error } = await sb.from("job_payments").insert({
-          job_id: id, amount: adv - already, method, reference: reference || null,
-          proof_path, note: "booking advance", recorded_by: S.me.id
+          job_id: id, amount: adv - already, method, proof_path,
+          note: "booking advance", recorded_by: S.me.id
         });
         if (error) throw error;
       } catch (e) { return fail(e); }
@@ -712,8 +711,8 @@ const A = {
         <button class="btn p" id="pySave" onclick="A.savePayment(${id},${coverGap ? "true" : "false"})">
           ${coverGap ? "Save the record" : "Record it"}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
-      <p class="hint">A screenshot is worth keeping, but it is the reference number that matches
-        your bank statement. Cash needs neither.</p>`);
+      <p class="hint">Attach whatever the client sent you — it is the record that the money
+        arrived. Cash needs nothing.</p>`);
     A.paySync();
   },
   paySync(prefix) {
@@ -728,7 +727,6 @@ const A = {
     const amount = parseFloat($("pyAmt").value || "0") || 0;
     const on = $("pyDate").value;
     const method = $("pyMethod").value;
-    const reference = $("pyRef").value.trim();
     const note = $("pyNote").value.trim();
     const file = ($("pyFile").files || [])[0];
 
@@ -736,16 +734,16 @@ const A = {
     if (amount > b) return toast("That is more than the " + rupee(b) +
       (coverGap ? " that is missing a record" : " outstanding"), true);
     if (!on) return toast("Pick the date it came in", true);
-    if (needsProof(method) && !reference && !file)
-      return toast("A " + method + " payment needs a reference number or a screenshot", true);
+    if (needsProof(method) && !file)
+      return toast("A " + method + " payment needs a screenshot", true);
 
     const btn = $("pySave");
     if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
     try {
       const proof_path = file ? await uploadProof(id, file) : null;
       const { error } = await sb.from("job_payments").insert({
-        job_id: id, amount, method, reference: reference || null,
-        proof_path, note: note || null, received_on: on, recorded_by: S.me.id
+        job_id: id, amount, method, proof_path,
+        note: note || null, received_on: on, recorded_by: S.me.id
       });
       if (error) throw error;
     } catch (e) {
@@ -835,20 +833,40 @@ const A = {
         <button class="btn" onclick="A.closeModal()">Done</button></div>
       <p class="hint">Copy this into the WhatsApp group. It stops working once they send their picks.</p>`);
   },
-  mailSelectionLink(id) {
-    const j = S.jobs.find(x => x.id === id);
-    const body = "Hi " + j.client_name + ",\n\nYour gallery is ready. Please pick the photos " +
-      "you'd like edited here:\n\n" + selectionLink(j) +
-      "\n\nYour package includes " + num(j.edited_count) + " edited photos." +
-      "\n\nLittle Shots by Hema";
-    location.href = "mailto:" + encodeURIComponent(j.email || "") +
-      "?subject=" + encodeURIComponent("Choose your photos — " + j.shoot_type) +
-      "&body=" + encodeURIComponent(body);
+  /* the same road the terms email takes — studio Gmail, wording from Settings */
+  async mailSelectionLink(id) {
+    const { data, error } = await sb.functions.invoke("send-selection-email",
+      { body: { job_id: id, preview: true, origin: location.origin } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>Choose your photos</h3>
+      <p class="mh">To <b>${esc(data.to)}</b></p>
+      <div style="border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#fff">
+        <div style="background:var(--bg);padding:10px 13px;border-bottom:1px solid var(--line);font-size:12.5px">
+          <b style="color:var(--ink-soft);font-weight:600;margin-right:6px">Subject</b>${esc(data.subject)}</div>
+        <div style="padding:15px 16px;font-size:13px;line-height:1.6;max-height:320px;overflow-y:auto">${
+          esc(data.text).replace(/\n/g, "<br>")}</div>
+      </div>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="selSend" onclick="A.sendSelectionEmail(${id})">Send it</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Edit the wording in Settings. Sent from
+        ${esc(data.sender || "the studio address")}, and the link dies once they send their picks.</p>`);
+  },
+  async sendSelectionEmail(id) {
+    const btn = $("selSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-selection-email",
+      { body: { job_id: id, origin: location.origin } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    await refresh("Selection link emailed to " + data.to);
   },
   /* the client sent their picks some other way, or changed their mind on the phone */
   setSelection(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
-    const held = manifestOf(j).length;
     modal(`<h3>The client's selection</h3>
       <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
       <label>Which files did they choose?</label>
@@ -859,10 +877,8 @@ const A = {
         <button class="btn p" onclick="A.saveSelection(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and move" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
-      <p class="hint">${held
-        ? "Checked against the " + held + " files from the shoot, so a typo won't slip through."
-        : "No file list was recorded for this shoot, so these are taken as typed."}
-        The package promises ${num(j.edited_count)} edited photos.</p>`);
+      <p class="hint">Whatever they sent — one per line, or commas. The package promises
+        ${num(j.edited_count)} edited photos.</p>`);
   },
   async saveSelection(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
@@ -961,15 +977,9 @@ const A = {
       <label>Where is the backup?</label>
       <input class="inp" id="hoBackup" value="${esc(j.backup_location || "")}"
         placeholder="e.g. Studio HDD 3 + Google Drive">
-      <label style="margin-top:10px">Paste the file names from the shoot</label>
-      <textarea id="hoList" style="min-height:110px" oninput="A.hoCount()"
-        placeholder="IMG_1001.jpg, IMG_1002.jpg, IMG_1003.jpg&#10;— straight out of Finder, Explorer or Lightroom">${esc(manifestOf(j).join("\n"))}</textarea>
-      <p class="hint" id="hoTally" style="margin-top:6px"></p>
-      <div id="hoCountBox" style="margin-top:10px">
-        <label>… or just how many were taken</label>
-        <input class="inp" id="hoFiles" type="number" min="1" value="${num(j.files_shot) || ""}"
-          placeholder="e.g. 840">
-      </div>
+      <label style="margin-top:10px">How many files were taken?</label>
+      <input class="inp" id="hoFiles" type="number" min="1" value="${num(j.files_shot) || ""}"
+        placeholder="e.g. 840">
       ${thenStage ? (b > 0
         ? `<label style="margin-top:10px">Payment collected (required)</label>
            <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
@@ -985,51 +995,41 @@ const A = {
         <button class="btn p" onclick="A.saveHandover(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and move" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
-      <p class="hint">The file names are what the client picks from, so paste them if you can —
-        a bare count still works, but then nothing they send can be checked.</p>`);
-    A.hoCount(); A.paySync("ho");
-  },
-  /* the pasted list speaks for how many files were taken */
-  hoCount() {
-    const box = $("hoList"), tally = $("hoTally"), countBox = $("hoCountBox");
-    if (!box || !tally) return;
-    const n = parseFiles(box.value).length;
-    tally.textContent = n ? n + " file" + (n === 1 ? "" : "s") + " pasted" : "";
-    if (countBox) countBox.style.display = n ? "none" : "";
+      <p class="hint">The client's gallery becomes shareable from ${esc(S.settings.share_from_stage || "")},
+        so the backup has to be safe first.</p>`);
+    A.paySync("ho");
   },
   async saveHandover(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
     const backup = $("hoBackup").value.trim();
-    const manifest = parseFiles($("hoList").value);
-    const files = manifest.length || (parseInt($("hoFiles").value || "0", 10) || 0);
+    const files = parseInt($("hoFiles").value || "0", 10) || 0;
     const payEl = $("hoPay");
     const pay = payEl ? (parseFloat(payEl.value || "0") || 0) : 0;
     const method = ($("hoMethod") || {}).value || "Cash";
-    const reference = ($("hoRef") || {}).value ? $("hoRef").value.trim() : "";
     const file = (($("hoFile") || {}).files || [])[0];
     const b = bal(j);
 
     if (!backup) return toast("Say where the shoot was backed up", true);
-    if (files <= 0) return toast("Paste the file names, or enter how many were taken", true);
+    if (files <= 0) return toast("Enter how many files were taken", true);
     if (thenStage && b > 0) {
       if (pay <= 0) return toast("Record the payment collected at the shoot", true);
       if (pay > b) return toast("That is more than the " + rupee(b) + " outstanding", true);
-      if (needsProof(method) && !reference && !file)
-        return toast("A " + method + " payment needs a reference number or a screenshot", true);
+      if (needsProof(method) && !file)
+        return toast("A " + method + " payment needs a screenshot", true);
     }
     /* the money gets its own record before the job's total moves */
     if (pay > 0) {
       try {
         const proof_path = file ? await uploadProof(id, file) : null;
         const { error } = await sb.from("job_payments").insert({
-          job_id: id, amount: pay, method, reference: reference || null,
-          proof_path, note: "collected at the shoot", recorded_by: S.me.id
+          job_id: id, amount: pay, method, proof_path,
+          note: "collected at the shoot", recorded_by: S.me.id
         });
         if (error) throw error;
       } catch (e) { return fail(e); }
     }
     A.closeModal();
-    const f = { backup_location: backup, files_shot: files, file_manifest: manifest };
+    const f = { backup_location: backup, files_shot: files };
     if (thenStage) f.stage = thenStage;
     if (pay > 0) f.amount_received = num(j.amount_received) + pay;
     await patch(id, f, thenStage
@@ -1255,14 +1255,13 @@ async function patch(id, fields, msg) {
   if (error) return fail(error);
   await refresh(msg);
 }
-/* the reference and the screenshot, shared by the payment form and the handover */
+/* the screenshot, shared by the payment form, the booking and the handover */
 function proofFields(prefix) {
   return `<div id="${prefix}Proof">
-    <label style="margin-top:10px">Reference number</label>
-    <input class="inp" id="${prefix}Ref" placeholder="UPI transaction ID, bank reference or cheque number">
-    <label style="margin-top:10px">Screenshot</label>
+    <label style="margin-top:10px">Screenshot (required)</label>
     <input class="inp" id="${prefix}File" type="file" accept="image/*,application/pdf">
-    <p class="hint" style="margin-top:6px">Either one will do. Photos are shrunk before they are stored.</p>
+    <p class="hint" style="margin-top:6px">The confirmation the client sent you. Photos are shrunk
+      before they are stored. Cash needs nothing.</p>
   </div>`;
 }
 /* a size dropdown with the studio's standard sizes plus Others */
