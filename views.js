@@ -338,10 +338,12 @@ async function openJob(id, quiet) {
   $("dTitle").textContent = j.client_name;
   $("dSub").textContent = `${j.shoot_type} · ${j.location} · ${j.stage}`;
   $("dBody").innerHTML = jobBody(j, null, null);
-  const [n, a] = await Promise.all([
+  const [n, a, p] = await Promise.all([
     sb.from("job_notes").select("body,created_at,author_id").eq("job_id", id).order("created_at", { ascending: false }).limit(30),
-    sb.from("job_activity").select("action,created_at,actor_id").eq("job_id", id).order("created_at", { ascending: false }).limit(40)
+    sb.from("job_activity").select("action,created_at,actor_id").eq("job_id", id).order("created_at", { ascending: false }).limit(40),
+    sb.from("v_job_payments").select("*").eq("job_id", id).order("received_on", { ascending: false }).limit(40)
   ]);
+  S.payments = p.data || [];
   if (S.openId === id) $("dBody").innerHTML = jobBody(j, n.data || [], a.data || []);
 }
 const nameOf = uid => (S.people.find(p => p.id === uid) || {}).full_name || "System";
@@ -611,6 +613,7 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const needs = nextS ? slotNeeded(j, nextS) : null;
   const hoGaps = nextS && !needs ? handoverNeeded(j, nextS) : null;
   const pkGaps = nextS ? packageNeeded(j, nextS) : null;
+  const mailGate = nextS && emailNeeded(j, nextS);
   const termsGate = nextS && !pkGaps && termsNeeded(j, nextS);
   const held = nextS ? childBlocking2(j, nextS) : null;
   const needGallery = nextS && galleryLinkNeeded(j, nextS);
@@ -619,6 +622,8 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   return `<div class="sec"><h5>Move stage</h5>
     ${held ? `<div class="alert red"><b>Held by another process.</b> The ${esc(held)} —
       ${esc(nextS)} waits for it.</div>` : ""}
+    ${mailGate ? `<div class="alert amber"><b>${esc(nextS)} needs the client's email address first.</b>
+      That is where the terms go — you'll be asked for it before anything else.</div>` : ""}
     ${needGallery ? `<div class="alert amber"><b>${esc(nextS)} needs the Pixieset gallery link.</b>
       You'll be asked for it.</div>` : ""}
     ${needPicks ? `<div class="alert amber"><b>The client hasn't sent their selection yet.</b>
@@ -626,7 +631,7 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
     ${needEdit ? `<div class="alert amber"><b>${esc(nextS)} needs the edited file count and link.</b>
       You'll be asked for them.</div>` : ""}
     ${gateBlocked ? `<div class="alert red"><b>Blocked.</b> ${rupee(b)} outstanding — clear it or override.</div>` : ""}
-    ${pkGaps ? `<div class="alert amber"><b>${esc(nextS)} needs the package settled first.</b>
+    ${pkGaps && !mailGate ? `<div class="alert amber"><b>${esc(nextS)} needs the package settled first.</b>
       Missing ${esc(pkGaps.join(", "))} — you'll be asked for it.</div>` : ""}
     ${termsGate ? `<div class="alert amber"><b>The terms and booking details have to be emailed
       before ${esc(nextS)}.</b> You'll be asked to send them.</div>` : ""}
@@ -659,13 +664,42 @@ function paySection(j, b, gate) {
       <div class="payrow total ${b > 0 ? "red" : ""}"><span>${b > 0 ? "Balance pending" : "Fully paid"}</span>
         <span>${b > 0 ? rupee(b) : "✓"}</span></div>
       <div class="acts" style="margin-top:11px">
-        ${b > 0 ? `<input class="inp" id="payBox" style="width:110px" type="number" min="1" max="${b}" placeholder="Amount">
-          <button class="btn p" onclick="A.recordPay(${j.id})">Record payment</button>
-          <button class="btn sm" onclick="A.recordPay(${j.id},${b})">Mark fully paid</button>`
+        ${b > 0 ? `<button class="btn p" onclick="A.recordPay(${j.id})">Record a payment</button>
+          <button class="btn sm" onclick="A.recordPay(${j.id},${b})">Record the full ${rupee(b)}</button>`
         : ""}
         <button class="btn sm" onclick="A.editPackage(${j.id})">Edit package &amp; delivery</button>
       </div></div>
-    ${b > 0 ? `<p class="hint">${esc(gate || "")} is blocked until this clears.</p>` : ""}</div>`;
+    ${b > 0 ? `<p class="hint">${esc(gate || "")} is blocked until this clears.</p>` : ""}
+    ${paymentsList(j)}</div>`;
+}
+
+/* every payment that has a record behind it */
+function paymentsList(j) {
+  const list = S.payments || [];
+  const gap = payGap(j);
+  if (!list.length && !num(j.amount_received)) return "";
+  const mark = { Cash: "₹", UPI: "⇄", "Bank transfer": "≡", Card: "▤", Cheque: "✎" };
+  return `<div style="margin-top:13px">
+    <h6 style="font-size:11.5px;color:var(--ink-soft);font-weight:700;margin:0 0 7px">
+      What has a record behind it</h6>
+    ${list.length ? `<div class="log" style="max-height:none">
+      ${list.map(p => `<div style="padding:7px 0;border-bottom:1px solid var(--line)">
+        <b>${rupee(p.amount)}</b> · ${esc(p.method)} ${mark[p.method] || ""}
+        ${p.reference ? `<br><span style="color:var(--ink-soft)">ref ${esc(p.reference)}</span>` : ""}
+        ${p.proof_path ? ` <button class="btn sm" style="padding:2px 8px;font-size:11px"
+          onclick="A.openProof('${esc(p.proof_path)}')">Screenshot</button>` : ""}
+        <br><span style="color:var(--ink-soft);font-size:11px">
+          ${esc(fmtDay(p.received_on))} · ${esc(p.recorded_by_name || "unknown")}${
+          p.note ? " · " + esc(p.note) : ""}</span>
+      </div>`).join("")}
+    </div>` : ""}
+    ${gap > 0 ? `<p class="hint" style="color:var(--amber);margin-top:8px">
+      ${rupee(gap)} of the ${rupee(j.amount_received)} received has no record behind it${
+      list.length ? " — a payment was typed straight onto the total" : " — it predates this, or was typed straight onto the total"}.
+      <button class="btn sm" style="margin-left:4px" onclick="A.logPast(${j.id})">Add the record</button></p>`
+    : list.length ? `<p class="hint" style="color:var(--green);margin-top:8px">
+      Every rupee received has a record behind it.</p>` : ""}
+  </div>`;
 }
 
 function accessSection(j, b) {
@@ -869,7 +903,7 @@ function slaView() {
            ["pay_gate_stage", "Blocked while money is owed"],
            ["booked_stage", "Advance and shoot slot required from"],
            ["shoot_date_from", "TBD no longer accepted from"],
-           ["terms_stage", "Terms email required before"],
+           ["terms_stage", "Email and terms required before"],
            ["gallery_stage", "Shoot handover required before"],
            ["selection_stage", "Gallery link required before"],
            ["qc_stage", "Edited count and link required before"],
