@@ -10,6 +10,8 @@ data and access control.
 | `index.html` | Page shell |
 | `styles.css` | All styling |
 | `app.js` | The whole application |
+| `quote.html` | Quote builder (Quotes tab, also works on its own at `/quote`) |
+| `quotes-tab.js` | Adds the Quotes tab to the app shell |
 | `vercel.json` | Headers and caching |
 
 No build step and no dependencies to install. Editing `app.js` and pushing is a deploy.
@@ -70,3 +72,17 @@ Pushing to `main` deploys, once this repo is connected to the Vercel project.
 `SUPABASE_URL` and `SUPABASE_KEY` at the top of `app.js` are publishable keys. They are
 safe to commit - they grant nothing on their own; row level security decides what any
 signed-in person can see.
+
+## Quote builder
+
+`quote.html` is self-contained and is shown inside the **Quotes** tab (next to Sales) in a
+frame that lives outside the re-rendered app, so a half-built quote survives switching
+tabs. It also opens on its own at `/quote`.
+
+- Who sees the tab: admins and anyone with Sales access.
+- Live prices: the `settings` row `quote_catalogue_maternity` (JSON). Admins change them
+  from **Prices & settings** inside the builder; the `settings_admin` policy is what
+  actually restricts writes. The copy embedded in `quote.html` is only a fallback.
+- `vercel.json` lets `/quote` be framed by the app itself (SAMEORIGIN); every other page
+  still refuses framing.
+- Newborn and sitter packages go in as more categories in the same JSON shape.
