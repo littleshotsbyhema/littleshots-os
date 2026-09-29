@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quote Builder · Little Shots Studio OS</title>
+<meta name="description" content="Little Shots by Hema — maternity session quote builder">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Jost:wght@300;400;500;600&display=swap">
+<style>
+:root{
+  --paper:#FAF8F6; --surface:#FFFFFF; --ink:#171413; --muted:#6E6661; --line:#E7E1DC;
+  --accent:#9A6352; --accent-soft:#F4EAE5; --ok:#2F7A5B; --warn:#A5671F; --warn-soft:#FBF1E3;
+  --bronze:#A86B3C; --gold:#B38A2A; --diamond:#6F86A3; --emerald:#2F7A5B;
+  --display:"Anton","Oswald","Impact",sans-serif;
+  --body:"Jost","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --r:10px;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+img{max-width:100%}
+/* inside the Studio OS tab: the app already shows the brand */
+body.embedded header.top .brand{display:none}
+body.embedded header.top{padding-block:14px 12px;justify-content:flex-end}
+html{color-scheme:light}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5;padding-inline:16px;padding-block:0 96px}
+.wrap{max-width:1240px;margin:0 auto}
+header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-block:28px 20px;border-bottom:1px solid var(--line)}
+.brand{display:flex;flex-direction:column;gap:2px}
+.brand small{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.brand h1{font-family:var(--display);font-weight:400;font-size:clamp(30px,5vw,44px);line-height:1;letter-spacing:.01em;margin:0;text-transform:uppercase}
+.brand h1 span{font-family:var(--body);font-weight:300;text-transform:none;font-size:.62em;letter-spacing:0;margin-right:8px}
+.cats{display:flex;gap:6px;flex-wrap:wrap}
+.cat{border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px var(--body);padding:8px 14px;border-radius:999px;cursor:pointer}
+.cat[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.cat[disabled]{color:var(--muted);cursor:not-allowed;background:transparent}
+.cat[disabled] em{font-style:normal;font-size:11px;margin-left:4px;opacity:.8}
+
+.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,520px);gap:32px;padding-top:24px;align-items:start}
+@media (max-width:980px){.layout{grid-template-columns:minmax(0,1fr)}}
+section.block{display:flex;flex-direction:column;gap:12px;padding-block:18px;border-bottom:1px solid var(--line)}
+section.block:last-child{border-bottom:0}
+.eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:500;margin:0}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.grid2{grid-template-columns:minmax(0,1fr)}}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+input[type=text],input[type=tel],input[type=date],input[type=number],textarea{font:400 15px var(--body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 11px;width:100%}
+textarea{resize:vertical;min-height:60px}
+input:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.pkgs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:760px){.pkgs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pkg{position:relative;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 14px 12px;cursor:pointer;color:var(--ink);font-family:var(--body);display:flex;flex-direction:column;gap:6px}
+.pkg[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.pkg .tier{display:flex;align-items:center;gap:6px;font-family:var(--display);font-size:20px;text-transform:uppercase;letter-spacing:.02em;line-height:1}
+.pkg .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.pkg .sub{font-size:12.5px;color:var(--muted);line-height:1.3;min-height:2.6em}
+.pkg .price{font-variant-numeric:tabular-nums;font-weight:600;font-size:16px}
+.pkg .mrp{font-size:12px;color:var(--muted);text-decoration:line-through;font-variant-numeric:tabular-nums}
+.pkg .tag{position:absolute;top:-9px;right:10px;background:var(--accent);color:var(--paper);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:999px;font-weight:500}
+
+.rows{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:10px 12px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .lbl{font-size:14px;line-height:1.35}
+.row .lbl small{display:block;color:var(--muted);font-size:12px}
+.row .amt{font-variant-numeric:tabular-nums;font-size:14px;min-width:78px;text-align:right;color:var(--muted)}
+.row .amt.on{color:var(--ink);font-weight:500}
+.row.off{opacity:.45}
+.step{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.step button{width:32px;height:32px;border:0;background:transparent;color:var(--ink);font-size:18px;cursor:pointer}
+.step button:disabled{color:var(--line);cursor:default}
+.step output{min-width:28px;text-align:center;font-variant-numeric:tabular-nums;font-weight:500}
+.switch{position:relative;width:42px;height:24px;flex:none}
+.switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.switch span{position:absolute;inset:0;background:var(--line);border-radius:999px;transition:background .15s;pointer-events:none}
+.switch span::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--surface);transition:transform .15s;box-shadow:0 1px 2px rgb(0 0 0 / .2)}
+.switch input:checked + span{background:var(--ink)}
+.switch input:checked + span::after{transform:translateX(18px)}
+.switch input:focus-visible + span{outline:2px solid var(--accent);outline-offset:2px}
+.inr{position:relative;width:120px}
+.inr::before{content:"₹";position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px}
+.inr input{padding-left:22px;text-align:right;font-variant-numeric:tabular-nums}
+.row .need{color:var(--warn);font-size:12px}
+.row.removed .lbl{text-decoration:line-through;color:var(--muted)}
+.row.removed .lbl small{display:inline-block;width:100%}
+.notice{font-size:13px;border-radius:8px;padding:9px 12px;background:var(--warn-soft);color:var(--warn)}
+.notice.good{background:var(--accent-soft);color:var(--accent)}
+.custom{display:grid;grid-template-columns:minmax(0,1fr) 120px 32px;gap:8px;align-items:center}
+.linkbtn{background:none;border:0;color:var(--accent);font:500 14px var(--body);cursor:pointer;padding:4px 0;text-align:left}
+.x{width:32px;height:32px;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:8px;cursor:pointer;font-size:16px}
+
+/* preview column */
+.side{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);display:flex;flex-direction:column;gap:12px}
+@media (max-width:980px){.side{position:static}}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);font:500 14px var(--body);padding:10px 14px;border-radius:8px;cursor:pointer;text-decoration:none}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn[disabled]{opacity:.5;cursor:progress}
+.toast{font-size:13px;color:var(--ok);min-height:20px}
+.sheet-frame{overflow-x:auto;border-radius:6px;box-shadow:0 1px 2px rgb(0 0 0 / .06),0 8px 30px rgb(0 0 0 / .08)}
+
+/* the quote itself: a printed document, fixed palette in both themes */
+.sheet{width:100%;min-width:440px;background:#FFFFFF;color:#1A1716;font-family:var(--body);padding:34px 34px 28px;display:flex;flex-direction:column;gap:18px}
+.sheet .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid #1A1716;padding-bottom:14px}
+.sheet .mark{font-family:var(--display);font-size:30px;line-height:.95;text-transform:uppercase;letter-spacing:.01em}
+.sheet .mark small{display:block;font-family:var(--body);font-size:12px;font-weight:400;letter-spacing:.2em;color:#6E6661;margin-top:6px}
+.sheet .meta{text-align:right;font-size:12px;color:#6E6661;line-height:1.6;font-variant-numeric:tabular-nums}
+.sheet .meta b{color:#1A1716;font-weight:600;white-space:nowrap}
+.sheet .to{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px}
+.sheet .to span{display:block;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#8A817B}
+.sheet .pk{display:flex;flex-direction:column;gap:4px}
+.sheet .pk h2{margin:0;font-family:var(--display);font-weight:400;font-size:26px;text-transform:uppercase;letter-spacing:.01em;display:flex;align-items:center;gap:8px;line-height:1.05}
+.sheet .pk p{margin:0;color:#6E6661;font-size:13px}
+.sheet .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.sheet h3{margin:0 0 6px;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#8A817B;font-weight:500}
+.sheet ul{margin:0;padding-left:16px;font-size:12.5px;line-height:1.5}
+.sheet .nt{font-size:11.5px;color:#6E6661;margin:0;border-left:2px solid #E7E1DC;padding-left:10px}
+.sheet table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.sheet th{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#8A817B;font-weight:500;text-align:left;padding:6px 0;border-bottom:1px solid #E7E1DC}
+.sheet th.n,.sheet td.n{text-align:right;white-space:nowrap}
+.sheet td{padding:7px 0;border-bottom:1px solid #F0ECE8;vertical-align:top}
+.sheet td small{display:block;color:#8A817B;font-size:11px}
+.sheet td.n{padding-left:12px}
+.sheet .strike{text-decoration:line-through;color:#8A817B;font-size:11.5px;margin-right:6px}
+.sheet .tot{display:flex;flex-direction:column;gap:4px;margin-left:auto;width:62%;font-size:13px;font-variant-numeric:tabular-nums}
+.sheet .tot div{display:flex;justify-content:space-between;gap:12px}
+.sheet .tot .save{color:#2F7A5B}
+.sheet .tot .grand{border-top:2px solid #1A1716;padding-top:8px;margin-top:4px;font-size:15px;font-weight:600}
+.sheet .tot .grand b{font-family:var(--display);font-weight:400;font-size:24px;letter-spacing:.01em}
+.sheet .pay{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sheet .pay div{background:#F6F2EF;border-radius:6px;padding:10px 12px;font-size:12px;color:#6E6661}
+.sheet .pay b{display:block;color:#1A1716;font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+.sheet .terms{font-size:10.5px;color:#6E6661;line-height:1.5;margin:0;padding-left:14px}
+.sheet .ft{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:#8A817B;border-top:1px solid #E7E1DC;padding-top:10px}
+.sheet .ft i{font-style:normal;font-family:var(--display);color:#1A1716;font-size:13px;letter-spacing:.02em;text-transform:uppercase}
+
+details.dev{font-size:13px;color:var(--muted)}
+details.dev summary{cursor:pointer}
+details.dev pre{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:260px;font-size:11.5px;color:var(--ink)}
+
+.hdr-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.set-hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding-block:24px 8px}
+.set-meta{margin:4px 0 0;font-size:13px;color:var(--muted)}
+.set-pkgs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+@media (max-width:820px){.set-pkgs{grid-template-columns:minmax(0,1fr)}}
+.set-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px}
+.set-card h3{margin:0;font-family:var(--display);font-weight:400;font-size:20px;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.set-card h3 .dot{width:9px;height:9px;border-radius:50%}
+.set-prices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.set-prices .inr{width:100%}
+.set-items{display:flex;flex-direction:column}
+.set-item{display:grid;grid-template-columns:minmax(0,1fr) 110px 42px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:13.5px;line-height:1.3}
+.set-item .inr{width:110px}
+.set-item .inr.off{visibility:hidden}
+.set-item.head{border-top:0;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-bottom:4px}
+.set-addons .row .inr{width:120px}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--ink);color:var(--paper);display:none;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
+.bar b{font-variant-numeric:tabular-nums;font-size:18px}
+.bar small{display:block;opacity:.7;font-size:12px}
+.bar a{color:var(--paper);font-weight:500;text-decoration:none;border:1px solid rgb(255 255 255 / .35);padding:8px 12px;border-radius:8px}
+@media (max-width:980px){.bar{display:flex}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <small>Little Shots by Hema · Coimbatore</small>
+      <h1><span>Quote</span>Builder</h1>
+    </div>
+    <div class="hdr-right">
+    <button class="btn ghost" id="b-settings" hidden>Prices &amp; settings</button>
+    <nav class="cats" aria-label="Session type">
+      <button class="cat" id="cat-maternity" aria-pressed="true">Maternity</button>
+      <button class="cat" id="cat-newborn" disabled>Newborn <em>soon</em></button>
+      <button class="cat" id="cat-sitter" disabled>Sitter <em>soon</em></button>
+    </nav>
+    </div>
+  </header>
+
+  <p class="notice" id="signin" hidden>You are not signed in to Studio OS, so this shows the starting prices. <a href="/">Sign in</a> to quote with the studio's current prices.</p>
+  <div class="layout" id="builder">
+    <main>
+      <section class="block">
+        <p class="eyebrow">Client</p>
+        <div class="grid2">
+          <label class="f">Name<input type="text" id="c-name" autocomplete="off"></label>
+          <label class="f">WhatsApp number<input type="tel" id="c-phone" inputmode="tel" autocomplete="off" placeholder="98XXXXXXXX"></label>
+          <label class="f">Preferred shoot date<input type="date" id="c-date"></label>
+          <label class="f">Weeks pregnant (optional)<input type="number" id="c-weeks" min="12" max="40" inputmode="numeric"></label>
+        </div>
+      </section>
+
+      <section class="block">
+        <p class="eyebrow">Package</p>
+        <div class="pkgs" id="pkgs"></div>
+      </section>
+
+      <section class="block">
+        <p class="eyebrow">Customise package</p>
+        <p style="margin:0;font-size:13px;color:var(--muted)">Switch off anything the client doesn't want. The deduction shows as its own line on the quote.</p>
+        <div class="rows" id="items"></div>
+      </section>
+
+      <section class="block">
+        <p class="eyebrow">Offer price eligibility</p>
+        <div class="rows">
+          <div class="row">
+            <div class="lbl">Client allows us to share images on social media<small>Required for the offer price</small></div>
+            <span></span>
+            <label class="switch"><input type="checkbox" id="t-social" aria-label="Social media permission"><span></span></label>
+          </div>
+          <div class="row">
+            <div class="lbl">Outdoor session upgrade<small>Offer price applies to studio sessions only. Park or location entry fees are paid by the client.</small></div>
+            <div class="inr" id="outdoor-wrap"><input type="number" id="outdoor-amt" min="0" step="500" aria-label="Outdoor travel and convenience charge"></div>
+            <label class="switch"><input type="checkbox" id="t-outdoor" aria-label="Outdoor session"><span></span></label>
+          </div>
+        </div>
+        <div class="notice" id="elig"></div>
+      </section>
+
+      <section class="block">
+        <p class="eyebrow">Add-ons</p>
+        <div class="rows" id="addons"></div>
+      </section>
+
+      <section class="block">
+        <p class="eyebrow">Adjustments</p>
+        <div id="customs" style="display:flex;flex-direction:column;gap:8px"></div>
+        <button class="linkbtn" id="add-custom">+ Add a custom line</button>
+        <div class="rows">
+          <div class="row">
+            <div class="lbl">Special discount<small>Shown as a separate line on the quote</small></div>
+            <span></span>
+            <div class="inr"><input type="number" id="discount" min="0" step="500" aria-label="Discount amount"></div>
+          </div>
+          <div class="row">
+            <div class="lbl">Advance to confirm the date<small id="adv-hint">Pre-filled at 30% of the total. Type to override.</small></div>
+            <span></span>
+            <div class="inr"><input type="number" id="advance" min="0" step="500" aria-label="Advance amount"></div>
+          </div>
+        </div>
+        <label class="f">Note for the client (optional)<textarea id="c-note" placeholder="e.g. Includes a sunset backlit setup as discussed"></textarea></label>
+      </section>
+    </main>
+
+    <aside class="side" id="preview">
+      <div class="actions">
+        <button class="btn" id="b-copy">Copy WhatsApp message</button>
+        <a class="btn ghost" id="b-wa" href="https://wa.me/" target="_blank" rel="noopener">Open WhatsApp</a>
+        <button class="btn ghost" id="b-pdf" hidden>Save PDF</button>
+        <button class="btn ghost" id="b-png" hidden>Save image</button>
+      </div>
+      <div class="toast" id="toast" role="status"></div>
+      <div class="sheet-frame"><div class="sheet" id="sheet"></div></div>
+      <details class="dev">
+        <summary>Quote data (JSON)</summary>
+        <p>For attaching this quote to an enquiry later.</p>
+        <button class="btn ghost" id="b-json">Copy JSON</button>
+        <pre id="json"></pre>
+      </details>
+    </aside>
+  </div>
+</div>
+
+<div class="wrap" id="settings" hidden>
+  <div class="set-hd">
+    <div>
+      <p class="eyebrow">Maternity · prices &amp; settings</p>
+      <p class="set-meta" id="set-meta">Showing the starting prices (as saved on 25 Sep).</p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="s-save">Save for everyone</button>
+      <button class="btn ghost" id="s-cancel">Cancel</button>
+    </div>
+  </div>
+  <div class="toast" id="s-toast" role="status"></div>
+  <div id="set-body"></div>
+</div>
+
+<div class="bar"><div><small id="bar-pkg"></small><b id="bar-total"></b></div><a href="#preview">View quote</a></div>
+
+<!-- Fallback catalogue (prices as saved 25 Sep 2026). Live prices are the settings row
+     "quote_catalogue_maternity" in Supabase; admins edit them from Prices & settings. -->
+<script type="application/json" id="lsh-catalogue">
+{"version":"2026-09-25","currency":"INR","categories":{"maternity":{"addons":[{"applies_to":["bronze"],"code":"wardrobe_gown","kind":"toggle","label":"Wardrobe gown in place of client outfit","unit_inr":2000},{"applies_to":["bronze"],"code":"makeup_look","kind":"qty","label":"Makeup look","max":2,"unit_inr":4000},{"applies_to":["gold"],"code":"extra_look_saree","kind":"qty","label":"Additional look","max":3,"sub":"Hairstyle change + saree draping","unit_inr":2000},{"code":"extra_images","kind":"qty","label":"Additional retouched images","max":60,"step":1,"sub":"₹500 per image","unit_inr":500},{"code":"frame_8x12","kind":"qty","label":"Extra frame 8×12","max":10,"unit_inr":750},{"code":"frame_12x18","kind":"qty","label":"Extra frame 12×18","max":10,"unit_inr":1500},{"code":"frame_16x24","kind":"qty","label":"Extra frame 16×24","max":10,"unit_inr":2500},{"code":"frame_24x36","kind":"qty","label":"Extra frame 24×36","max":10,"unit_inr":4000},{"code":"album_12x12","kind":"qty","label":"12×12 leather-cover album","max":3,"sub":"With complimentary coffee table album · 15 sheets / 30 pages","unit_inr":10000},{"code":"album_sheets","kind":"qty","label":"Additional album sheets","max":20,"requires_album":true,"sub":"₹500 per sheet","unit_inr":500}],"advance_pct":30,"label":"Maternity","packages":[{"code":"bronze","color":"bronze","deliverables":[{"credit_inr":null,"k":"d0","removable":false,"t":"15 premium retouched images"},{"credit_inr":null,"k":"d1","removable":false,"t":"Watermarked preview gallery for selection"},{"credit_inr":750,"k":"frame","removable":true,"t":"1 premium 8×12 complimentary frame"}],"id":"mat_bronze","includes":[{"credit_inr":null,"k":"i0","removable":false,"t":"2 outfits / looks (1 gown from our wardrobe + 1 client outfit)"},{"credit_inr":null,"k":"i1","removable":false,"t":"Couple session"}],"mrp_inr":18000,"name":"Bronze","notes":"Client outfit should be a gown or western wear. Saree setups are not part of this package.","offer_inr":16200,"title":"Motherhood Glow"},{"code":"gold","color":"gold","deliverables":[{"credit_inr":null,"k":"d0","removable":false,"t":"20 premium retouched images"},{"credit_inr":null,"k":"d1","removable":false,"t":"All soft copies (unedited moments included)"},{"credit_inr":4000,"k":"album","removable":true,"t":"1 premium 9×11 album (10 sheets / 20 pages)"},{"credit_inr":1500,"k":"frame","removable":true,"t":"1 premium 12×18 complimentary frame"}],"id":"mat_gold","includes":[{"credit_inr":null,"k":"i0","removable":false,"t":"2 outfits / looks (gowns from our wardrobe)"},{"credit_inr":null,"k":"i1","removable":false,"t":"Lifestyle session"},{"credit_inr":4000,"k":"makeup","removable":true,"t":"1 makeup look"},{"credit_inr":null,"k":"i3","removable":false,"t":"Couple session"},{"credit_inr":null,"k":"i4","removable":false,"t":"Basic gender reveal, lying-down pose and backlit setup"}],"mrp_inr":30000,"name":"Gold","notes":"A saree-based setup can be one of the looks.","offer_inr":27000,"tag":"Most loved","title":"Radiant Motherhood"},{"code":"diamond","color":"diamond","deliverables":[{"credit_inr":null,"k":"video","removable":true,"t":"10–15 sec gender reveal video"},{"credit_inr":null,"k":"d1","removable":false,"t":"25 premium retouched images"},{"credit_inr":null,"k":"d2","removable":false,"t":"All soft copies (unedited moments included)"},{"credit_inr":null,"k":"album","removable":true,"t":"1 premium 9×11 album (up to 15 sheets / 30 pages)"},{"credit_inr":1500,"k":"frame","removable":true,"t":"1 premium 12×18 complimentary frame"}],"id":"mat_diamond","includes":[{"credit_inr":null,"k":"i0","removable":false,"t":"3 outfits / looks (gowns from our wardrobe)"},{"credit_inr":null,"k":"i1","removable":false,"t":"Lifestyle, standard or saree-based setup"},{"credit_inr":null,"k":"makeup","removable":true,"t":"2 makeup looks"},{"credit_inr":null,"k":"i3","removable":false,"t":"Couple session"},{"credit_inr":null,"k":"i4","removable":false,"t":"Artistic gender reveal, lying-down pose and backlit shots"}],"mrp_inr":42000,"name":"Diamond","notes":"","offer_inr":37800,"title":"Eternal Glow"},{"code":"emerald","color":"emerald","deliverables":[{"credit_inr":null,"k":"d0","removable":false,"t":"Artistic gender reveal photos"},{"credit_inr":null,"k":"video","removable":true,"t":"10–15 sec gender reveal video"},{"credit_inr":null,"k":"reel","removable":true,"t":"45–60 sec cinematic reel"},{"credit_inr":null,"k":"d3","removable":false,"t":"35 premium retouched images"},{"credit_inr":null,"k":"d4","removable":false,"t":"All soft copies (unedited moments included)"},{"credit_inr":null,"k":"album","removable":true,"t":"9×11 premium album (up to 20 sheets / 40 pages)"},{"credit_inr":2500,"k":"frame","removable":true,"t":"1 signature 16×24 complimentary frame"},{"credit_inr":null,"k":"d7","removable":true,"t":"Priority editing (faster delivery)"}],"id":"mat_emerald","includes":[{"credit_inr":null,"k":"i0","removable":false,"t":"4 outfits / looks (gowns from our wardrobe)"},{"credit_inr":null,"k":"i1","removable":false,"t":"1 signature setup with fresh flowers"},{"credit_inr":null,"k":"makeup","removable":true,"t":"3 makeup looks"},{"credit_inr":null,"k":"i3","removable":false,"t":"All setups and poses from Diamond"}],"mrp_inr":65000,"name":"Emerald","notes":"","offer_inr":58500,"title":"Grand Keepsake"}],"terms":["Advance payment confirms your booking slot. Dates are reserved only on confirmation.","Editing begins after 100% payment. Edited images are delivered 3–4 weeks after final selection.","Frames are ready 2 weeks and albums 4 weeks after edited images are delivered (albums after design approval). Collect from the studio within 30 days of the pickup notification.","Courier or home delivery only on request; packing and shipping are charged to the client.","Offer prices apply only for studio sessions where we may share selected images on our portfolio and social media."]}}}
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+(function(){
+const DEFAULT_CAT = JSON.parse(document.getElementById('lsh-catalogue').textContent);
+let CAT = JSON.parse(JSON.stringify(DEFAULT_CAT));
+const $ = id => document.getElementById(id);
+const inr = n => '₹' + Math.round(n).toLocaleString('en-IN');
+const today = new Date();
+const iso = d => new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+const niceDate = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
+
+/* ---------- state ---------- */
+const state = {
+  category:'maternity',
+  client:{name:'', phone:'', shoot_date:iso(new Date(today.getTime()+21*864e5)), weeks:'', note:''},
+  package:'gold',
+  social:true, outdoor:false, outdoor_inr:0,
+  addons:{},
+  removed:{},               // {packageCode: {itemKey: deduction}}
+  custom:[],
+  discount_inr:0,
+  advance_inr:null,          // null = default % from the catalogue
+  quote_no: 'LSH-MAT-' + iso(today).slice(2).replace(/-/g,'') + '-' + String(today.getHours()).padStart(2,'0') + String(today.getMinutes()).padStart(2,'0')
+};
+const hash = (location.hash||'').replace('#','').toLowerCase();
+if (['bronze','gold','diamond','emerald'].includes(hash)) state.package = hash;
+
+const cat = () => CAT.categories[state.category];
+const pkg = () => cat().packages.find(p => p.code === state.package);
+
+/* ---------- pure pricing: the function the app can reuse as-is ---------- */
+function buildQuote(catalogue, s){
+  const c = catalogue.categories[s.category];
+  const p = c.packages.find(x => x.code === s.package);
+  const offerEligible = s.social && !s.outdoor;
+  const pkgPrice = offerEligible ? p.offer_inr : p.mrp_inr;
+  const lines = [{code:p.id, kind:'package', label:`${p.name} – ${p.title}`, qty:1, unit_inr:pkgPrice, total_inr:pkgPrice, mrp_inr:p.mrp_inr}];
+  const items = [...p.includes, ...p.deliverables];
+  const rm = {};
+  Object.entries((s.removed && s.removed[p.code]) || {}).forEach(([k,v]) => { if (items.some(it => it.k===k && it.removable)) rm[k] = v; });
+  items.forEach(it => {
+    if (!(it.k in rm)) return;
+    const d = Math.max(0, Number(rm[it.k])||0);
+    lines.push({code:'remove_'+it.k, kind:'removal', label:'Without: ' + it.t, qty:1, unit_inr:-d, total_inr:-d});
+  });
+  const hasAlbum = items.some(it => it.k==='album' && !(it.k in rm)) || (s.addons.album_12x12||0) > 0;
+  c.addons.forEach(a => {
+    if (a.applies_to && !a.applies_to.includes(p.code)) return;
+    if (a.requires_album && !hasAlbum) return;
+    const q = a.kind === 'toggle' ? (s.addons[a.code] ? 1 : 0) : (s.addons[a.code] || 0);
+    if (q > 0) lines.push({code:a.code, kind:'addon', label:a.label, qty:q, unit_inr:a.unit_inr, total_inr:q*a.unit_inr});
+  });
+  if (s.outdoor && s.outdoor_inr > 0) lines.push({code:'outdoor', kind:'addon', label:'Outdoor session – travel & convenience', qty:1, unit_inr:s.outdoor_inr, total_inr:s.outdoor_inr});
+  s.custom.forEach((x,i) => { const a = Number(x.amount)||0; if (x.label && a) lines.push({code:'custom_'+(i+1), kind:'custom', label:x.label, qty:1, unit_inr:a, total_inr:a}); });
+  const subtotal = lines.reduce((t,l) => t + l.total_inr, 0);
+  const discount = Math.min(Math.max(0, Number(s.discount_inr)||0), subtotal);
+  const total = Math.max(0, subtotal - discount);
+  const autoAdv = Math.round(total*(c.advance_pct ?? 30)/100/500)*500;
+  const advance = Math.min(total, s.advance_inr == null ? autoAdv : Math.max(0, s.advance_inr));
+  return {
+    quote_no:s.quote_no, quote_date:iso(today), category:s.category, catalogue_version:catalogue.version,
+    client:{...s.client},
+    package_id:p.id, package_code:p.code, customised:Object.keys(rm).length>0, removed_items:Object.keys(rm), pricing:offerEligible ? 'offer' : 'mrp',
+    social_permission:s.social, outdoor:s.outdoor,
+    lines, subtotal_inr:subtotal, discount_inr:discount, total_inr:total,
+    offer_saving_inr: offerEligible ? p.mrp_inr - p.offer_inr : 0,
+    advance_inr:advance, balance_inr:total-advance
+  };
+}
+window.LSHQuote = {get catalogue(){ return CAT; }, buildQuote};
+
+/* ---------- form rendering ---------- */
+function renderPackages(){
+  $('pkgs').innerHTML = cat().packages.map(p => `
+    <button class="pkg" data-code="${p.code}" aria-pressed="${p.code===state.package}">
+      ${p.tag ? `<span class="tag">${p.tag}</span>` : ''}
+      <span class="tier"><span class="dot" style="background:var(--${p.color})"></span>${p.name}</span>
+      <span class="sub">${p.title}</span>
+      <span><span class="price">${inr(p.offer_inr)}</span> <span class="mrp">${inr(p.mrp_inr)}</span></span>
+    </button>`).join('');
+}
+function renderAddons(){
+  const p = pkg();
+  const rm = state.removed[p.code] || {};
+  const hasAlbum = [...p.includes, ...p.deliverables].some(it => it.k==='album' && !(it.k in rm)) || (state.addons.album_12x12||0) > 0;
+  $('addons').innerHTML = cat().addons.map(a => {
+    const applies = !a.applies_to || a.applies_to.includes(p.code);
+    if (!applies) return '';
+    const blocked = a.requires_album && !hasAlbum;
+    const q = a.kind==='toggle' ? (state.addons[a.code]?1:0) : (state.addons[a.code]||0);
+    const ctrl = a.kind==='toggle'
+      ? `<label class="switch"><input type="checkbox" data-toggle="${a.code}" ${q?'checked':''} aria-label="${a.label}"><span></span></label>`
+      : `<span class="step"><button data-dec="${a.code}" ${q<=0||blocked?'disabled':''} aria-label="Fewer">−</button><output>${q}</output><button data-inc="${a.code}" ${q>=(a.max||99)||blocked?'disabled':''} aria-label="More">+</button></span>`;
+    const sub = blocked ? 'Needs an album (Gold and above, or the 12×12 album)' : (a.sub ? a.sub : inr(a.unit_inr) + (a.kind==='qty'?' each':''));
+    return `<div class="row ${blocked?'off':''}"><div class="lbl">${a.label}<small>${sub}</small></div>
+      <span class="amt ${q&&!blocked?'on':''}">${q&&!blocked ? inr(q*a.unit_inr) : '—'}</span>${ctrl}</div>`;
+  }).join('');
+}
+function renderItems(){
+  const p = pkg(), rm = state.removed[p.code] || {};
+  if (!p.includes.concat(p.deliverables).some(it => it.removable)) { $('items').innerHTML = '<div class="row"><div class="lbl"><small>Nothing in this package is set as removable. Change this in Prices & settings.</small></div></div>'; return; }
+  $('items').innerHTML = [...p.includes, ...p.deliverables].filter(it => it.removable).map(it => {
+    const off = it.k in rm;
+    const v = off ? rm[it.k] : '';
+    return `<div class="row ${off?'removed':''}"><div class="lbl">${it.t}${off && (v===''||v==null) ? '<small class="need">Enter the deduction amount</small>' : (off ? '<small>Removed</small>' : '')}</div>
+      ${off ? `<div class="inr"><input type="number" id="rm-${p.code}-${it.k}" data-rm="${it.k}" value="${v??''}" min="0" step="250" aria-label="Deduction for ${esc(it.t)}"></div>` : '<span></span>'}
+      <label class="switch"><input type="checkbox" data-item="${it.k}" ${off?'':'checked'} aria-label="Include ${esc(it.t)}"><span></span></label></div>`;
+  }).join('');
+}
+function renderCustoms(){
+  $('customs').innerHTML = state.custom.map((c,i) => `
+    <div class="custom">
+      <input type="text" id="cu-l-${i}" data-cl="${i}" value="${esc(c.label)}" placeholder="Line description" aria-label="Custom line description">
+      <div class="inr" style="width:auto"><input type="number" id="cu-a-${i}" data-ca="${i}" value="${c.amount||''}" step="500" aria-label="Custom line amount"></div>
+      <button class="x" data-cx="${i}" aria-label="Remove line">×</button>
+    </div>`).join('');
+}
+function esc(s){return String(s||'').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
+
+/* ---------- quote sheet ---------- */
+function renderSheet(q){
+  const p = pkg();
+  const pkgLine = q.lines[0];
+  const extras = q.lines.slice(1);
+  const c = q.client;
+  const rm = state.removed[p.code] || {};
+  const keep = arr => arr.filter(it => !(it.k in rm)).map(it => `<li>${it.t}</li>`).join('');
+  $('sheet').innerHTML = `
+    <div class="hd">
+      <div class="mark">Maternity Quote<small>LittleShots by Hema</small></div>
+      <div class="meta">Quote <b>${q.quote_no}</b><br>Date ${niceDate(q.quote_date)}</div>
+    </div>
+    <div class="to">
+      <div><span>Prepared for</span>${esc(c.name)||'—'}${c.phone?`<br>${esc(c.phone)}`:''}</div>
+      <div><span>Preferred shoot date</span>${niceDate(c.shoot_date)||'To be confirmed'}${c.weeks?` · ${esc(c.weeks)} weeks`:''}<br>${q.outdoor?'Outdoor session':'At our studio'}</div>
+    </div>
+    <div class="pk">
+      <h2><span style="width:11px;height:11px;border-radius:50%;background:${({bronze:'#A86B3C',gold:'#B38A2A',diamond:'#6F86A3',emerald:'#2F7A5B'})[p.color]}"></span>${p.name} · ${p.title}${q.customised?' <small style="font-family:var(--body);font-size:12px;letter-spacing:.14em;color:#8A817B">CUSTOMISED</small>':''}</h2>
+    </div>
+    <div class="cols">
+      <div><h3>Session includes</h3><ul>${keep(p.includes)}</ul></div>
+      <div><h3>You receive</h3><ul>${keep(p.deliverables)}</ul></div>
+    </div>
+    ${p.notes?`<p class="nt">${p.notes}</p>`:''}
+    <table>
+      <thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>${p.name} package</td><td class="n">1</td><td class="n">${q.pricing==='offer'?`<span class="strike">${inr(p.mrp_inr)}</span>`:''}${inr(pkgLine.total_inr)}</td></tr>
+        ${extras.map(l=>`<tr><td>${esc(l.label)}${l.qty>1?`<small>${inr(l.unit_inr)} each</small>`:''}</td><td class="n">${l.qty}</td><td class="n">${l.total_inr<0?'− '+inr(-l.total_inr):inr(l.total_inr)}</td></tr>`).join('')}
+      </tbody>
+    </table>
+    <div class="tot">
+      ${extras.length||q.discount_inr?`<div><span>Subtotal</span><span>${inr(q.subtotal_inr)}</span></div>`:''}
+      ${q.discount_inr?`<div class="save"><span>Special discount</span><span>− ${inr(q.discount_inr)}</span></div>`:''}
+      <div class="grand"><span>Total</span><b>${inr(q.total_inr)}</b></div>
+      ${q.offer_saving_inr?`<div class="save"><span>Offer saving on package</span><span>${inr(q.offer_saving_inr)}</span></div>`:''}
+    </div>
+    <div class="pay">
+      <div>Advance to confirm your date<b>${inr(q.advance_inr)}</b></div>
+      <div>Balance before editing begins<b>${inr(q.balance_inr)}</b></div>
+    </div>
+    ${c.note?`<p class="nt">${esc(c.note)}</p>`:''}
+    <div><h3>Good to know</h3><ol class="terms">${cat().terms.map(t=>`<li>${t}</li>`).join('')}<li>Extra images beyond the package are ₹500 each.</li></ol></div>
+    <div class="ft"><i>LittleShots by Hema</i><span>@littleshotsbyhema · Coimbatore</span></div>`;
+}
+
+/* ---------- WhatsApp text ---------- */
+function waText(q){
+  const p = pkg();
+  const L = [];
+  L.push(`Hi ${q.client.name ? q.client.name.replace(/\s*\(example\)/,'') : ''} 🤍`.replace(/\s+🤍/,' 🤍'));
+  L.push(`Here's your maternity shoot quote from *LittleShots by Hema*`);
+  L.push('');
+  const rm = state.removed[p.code] || {};
+  L.push(`*${p.name} – ${p.title}*${q.customised ? ' (customised)' : ''}`);
+  [...p.includes, ...p.deliverables].filter(it => !(it.k in rm)).forEach(it => L.push(`• ${it.t}`));
+  L.push('');
+  L.push(`Package: ${q.pricing==='offer' ? `~${inr(p.mrp_inr)}~ ` : ''}${inr(q.lines[0].total_inr)}`);
+  q.lines.slice(1).forEach(l => L.push(`${l.label}${l.qty>1?` × ${l.qty}`:''}: ${l.total_inr<0?'− '+inr(-l.total_inr):inr(l.total_inr)}`));
+  if (q.discount_inr) L.push(`Special discount: − ${inr(q.discount_inr)}`);
+  L.push(`*Total: ${inr(q.total_inr)}*`);
+  L.push('');
+  L.push(`Advance to confirm your date: ${inr(q.advance_inr)}`);
+  L.push(`Balance before editing begins: ${inr(q.balance_inr)}`);
+  if (q.client.shoot_date) L.push(`Preferred date: ${niceDate(q.client.shoot_date)}`);
+  if (q.client.note) { L.push(''); L.push(q.client.note); }
+  L.push('');
+  L.push(`Quote ${q.quote_no}`);
+  return L.join('\n');
+}
+
+/* ---------- master render ---------- */
+let current;
+function render(){
+  const p = pkg();
+  current = buildQuote(CAT, state);
+  document.querySelectorAll('.pkg').forEach(b => b.setAttribute('aria-pressed', b.dataset.code===state.package));
+  renderAddons();
+  if (!document.activeElement || !document.activeElement.dataset || !document.activeElement.dataset.rm) renderItems();
+  const el = $('elig');
+  if (current.pricing==='offer'){ el.className='notice good'; el.textContent = `Offer price applies: ${inr(p.offer_inr)} instead of ${inr(p.mrp_inr)}.`; }
+  else { el.className='notice'; el.textContent = `Full price ${inr(p.mrp_inr)} applies: ` + (!state.social && state.outdoor ? 'no social media permission and outdoor session.' : !state.social ? 'no social media permission.' : 'outdoor session.'); }
+  $('outdoor-wrap').style.visibility = state.outdoor ? 'visible' : 'hidden';
+  if (state.advance_inr == null) $('advance').value = current.advance_inr;
+  $('adv-hint').textContent = state.advance_inr == null ? `Pre-filled at ${cat().advance_pct ?? 30}% of the total. Type to override.` : 'Custom amount. Clear the field to go back to the default.';
+  renderSheet(current);
+  $('json').textContent = JSON.stringify(current, null, 2);
+  $('bar-total').textContent = inr(current.total_inr);
+  $('bar-pkg').textContent = `${p.name} · advance ${inr(current.advance_inr)}`;
+  const phone = (state.client.phone||'').replace(/\D/g,'');
+  const num = phone.length === 10 ? '91'+phone : phone;
+  $('b-wa').href = `https://wa.me/${num}?text=${encodeURIComponent(waText(current))}`;
+}
+
+/* ---------- wiring ---------- */
+renderPackages(); renderCustoms();
+$('c-name').value = state.client.name; $('c-date').value = state.client.shoot_date;
+$('t-social').checked = state.social; $('t-outdoor').checked = state.outdoor;
+
+$('pkgs').addEventListener('click', e => { const b = e.target.closest('.pkg'); if(!b) return; state.package = b.dataset.code; render(); });
+$('addons').addEventListener('click', e => {
+  const inc = e.target.closest('[data-inc]'), dec = e.target.closest('[data-dec]');
+  if (inc){ const k=inc.dataset.inc; state.addons[k]=(state.addons[k]||0)+1; render(); }
+  if (dec){ const k=dec.dataset.dec; state.addons[k]=Math.max(0,(state.addons[k]||0)-1); render(); }
+});
+$('items').addEventListener('change', e => {
+  const t = e.target.closest('[data-item]'); if(!t) return;
+  const code = state.package, k = t.dataset.item;
+  state.removed[code] = state.removed[code] || {};
+  if (t.checked) delete state.removed[code][k];
+  else { const it = [...pkg().includes, ...pkg().deliverables].find(x => x.k===k); state.removed[code][k] = it.credit_inr ?? ''; }
+  if (!Object.keys(state.removed[code]).length) delete state.removed[code];
+  render();
+  if (!t.checked){ const inp = $('rm-'+code+'-'+k); if (inp && inp.value==='') inp.focus(); }
+});
+$('items').addEventListener('input', e => {
+  const t = e.target.closest('[data-rm]'); if(!t) return;
+  state.removed[state.package][t.dataset.rm] = t.value;
+  render();
+});
+$('items').addEventListener('focusout', e => { if (e.target.dataset && e.target.dataset.rm) setTimeout(renderItems, 0); });
+$('addons').addEventListener('change', e => { const t=e.target.closest('[data-toggle]'); if(t){ state.addons[t.dataset.toggle]=t.checked; render(); } });
+const bind = (id, fn) => $(id).addEventListener('input', e => { fn(e.target); render(); });
+bind('c-name', t => state.client.name = t.value);
+bind('c-phone', t => state.client.phone = t.value);
+bind('c-date', t => state.client.shoot_date = t.value);
+bind('c-weeks', t => state.client.weeks = t.value);
+bind('c-note', t => state.client.note = t.value);
+bind('t-social', t => state.social = t.checked);
+bind('t-outdoor', t => state.outdoor = t.checked);
+bind('outdoor-amt', t => state.outdoor_inr = Number(t.value)||0);
+bind('discount', t => state.discount_inr = Number(t.value)||0);
+$('advance').addEventListener('input', e => { state.advance_inr = e.target.value === '' ? null : Number(e.target.value)||0; render(); });
+$('add-custom').addEventListener('click', () => { state.custom.push({label:'',amount:''}); renderCustoms(); render(); $('cu-l-'+(state.custom.length-1)).focus(); });
+$('customs').addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.cl) state.custom[+t.dataset.cl].label = t.value;
+  if (t.dataset.ca) state.custom[+t.dataset.ca].amount = t.value;
+  render();
+});
+$('customs').addEventListener('click', e => { const x=e.target.closest('[data-cx]'); if(x){ state.custom.splice(+x.dataset.cx,1); renderCustoms(); render(); } });
+
+function toast(msg){ $('toast').textContent = msg; clearTimeout(toast.t); toast.t = setTimeout(()=>$('toast').textContent='', 3500); }
+async function copy(text, done){
+  try { await navigator.clipboard.writeText(text); toast(done); }
+  catch { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy'); toast(done);}catch{toast('Copy blocked here. Select the text and copy it manually.');} ta.remove(); }
+}
+$('b-copy').addEventListener('click', () => copy(waText(current), 'Copied. Paste it into the client’s WhatsApp chat.'));
+$('b-json').addEventListener('click', () => copy(JSON.stringify(current,null,2), 'Quote JSON copied.'));
+
+/* ---------- file export: a plain browser download ---------- */
+function saveFile(filename, blob){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('Downloaded ' + filename);
+}
+$('b-pdf').hidden = false; $('b-png').hidden = false;
+
+const fname = ext => `LSH-Maternity-Quote-${(state.client.name||'client').replace(/\(example\)/,'').trim().replace(/[^\w]+/g,'-')||'client'}-${pkg().name}.${ext}`;
+async function snap(){
+  await document.fonts.ready;
+  return html2canvas($('sheet'), {scale:2, backgroundColor:'#FFFFFF', windowWidth:1200, width:$('sheet').offsetWidth});
+}
+$('b-png').addEventListener('click', async e => {
+  const b=e.currentTarget; b.disabled=true;
+  try { const cv = await snap(); cv.toBlob(bl => saveFile(fname('png'), bl), 'image/png'); } finally { b.disabled=false; }
+});
+$('b-pdf').addEventListener('click', async e => {
+  const b=e.currentTarget; b.disabled=true;
+  try {
+    const cv = await snap();
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({unit:'pt', format:'a4'});
+    const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight(), m = 24;
+    const w = pw - m*2, scale = w / cv.width, sliceH = Math.floor((ph - m*2) / scale);
+    for (let y = 0, i = 0; y < cv.height; y += sliceH, i++){
+      const part = document.createElement('canvas'); part.width = cv.width; part.height = Math.min(sliceH, cv.height - y);
+      part.getContext('2d').drawImage(cv, 0, y, cv.width, part.height, 0, 0, cv.width, part.height);
+      if (i) pdf.addPage();
+      pdf.addImage(part.toDataURL('image/jpeg', 0.92), 'JPEG', m, m, w, part.height*scale);
+    }
+    await saveFile(fname('pdf'), pdf.output('blob'));
+  } finally { b.disabled=false; }
+});
+
+/* ---------- prices & settings ---------- */
+/* Live prices: the settings row below. Every signed-in team member reads it; the
+   database only lets admins write it (settings_admin policy), whatever this page shows. */
+const CFG_KEY = 'quote_catalogue_maternity';
+const SUPABASE_URL = "https://bdadnmwauyarukqvfbvd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_xnepieuyFIwBqGwtwMJ7Sg_FovsaMNe";
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {auth:{persistSession:true, autoRefreshToken:false}}) : null;   // the app refreshes the shared session; this page only reads it
+let draft = null;
+const clone = o => JSON.parse(JSON.stringify(o));
+const PKG_HEX = {bronze:'#A86B3C',gold:'#B38A2A',diamond:'#6F86A3',emerald:'#2F7A5B'};
+
+function applyCategory(category){
+  CAT.categories.maternity = clone(category);
+  Object.keys(state.removed).forEach(code => {
+    const p = cat().packages.find(x => x.code === code);
+    const ok = p ? [...p.includes, ...p.deliverables].filter(it => it.removable).map(it => it.k) : [];
+    Object.keys(state.removed[code]).forEach(k => { if (!ok.includes(k)) delete state.removed[code][k]; });
+    if (!Object.keys(state.removed[code]).length) delete state.removed[code];
+  });
+  renderPackages(); renderItems(); render();
+}
+
+function renderSettings(){
+  const c = draft;
+  const pk = c.packages.map(p => `
+    <div class="set-card">
+      <h3><span class="dot" style="background:${PKG_HEX[p.color]||'#999'}"></span>${p.name}<span style="font-family:var(--body);font-size:13px;text-transform:none;color:var(--muted)">${p.title}</span></h3>
+      <div class="set-prices">
+        <label class="f">Full price<div class="inr"><input type="number" id="sp-${p.code}-mrp" data-p="${p.code}" data-f="mrp_inr" value="${p.mrp_inr}" min="0" step="500"></div></label>
+        <label class="f">Offer price<div class="inr"><input type="number" id="sp-${p.code}-offer" data-p="${p.code}" data-f="offer_inr" value="${p.offer_inr}" min="0" step="500"></div></label>
+      </div>
+      <div class="set-items">
+        <div class="set-item head"><span>Item</span><span>Deduction</span><span>Allow</span></div>
+        ${[...p.includes, ...p.deliverables].map(it => `
+        <div class="set-item">
+          <span>${esc(it.t)}</span>
+          <div class="inr ${it.removable?'':'off'}"><input type="number" id="si-${p.code}-${it.k}" data-cr="${p.code}|${it.k}" value="${it.credit_inr ?? ''}" min="0" step="250" placeholder="per quote" aria-label="Default deduction for ${esc(it.t)}"></div>
+          <label class="switch"><input type="checkbox" data-rmv="${p.code}|${it.k}" ${it.removable?'checked':''} aria-label="${esc(it.t)} can be removed"><span></span></label>
+        </div>`).join('')}
+      </div>
+    </div>`).join('');
+  const ad = c.addons.map(a => `
+    <div class="row"><div class="lbl">${esc(a.label)}<small>${a.applies_to ? 'Only for ' + a.applies_to.map(x => x[0].toUpperCase()+x.slice(1)).join(', ') : 'All packages'}${a.kind==='qty' ? ' · per unit' : ''}</small></div>
+      <span></span><div class="inr"><input type="number" id="sa-${a.code}" data-ad="${a.code}" value="${a.unit_inr}" min="0" step="250" aria-label="Price for ${esc(a.label)}"></div></div>`).join('');
+  $('set-body').innerHTML = `
+    <section class="block"><p class="eyebrow">Packages</p>
+      <p class="set-meta">Switch on "Allow" for items the team may take out of a package. A blank deduction means the team types the amount on each quote.</p>
+      <div class="set-pkgs">${pk}</div></section>
+    <section class="block set-addons"><p class="eyebrow">Add-on prices</p><div class="rows">${ad}</div></section>
+    <section class="block"><p class="eyebrow">Advance</p>
+      <div class="rows"><div class="row"><div class="lbl">Default advance<small>Percentage of the quote total, rounded to the nearest ₹500</small></div><span></span>
+      <div class="inr" style="width:120px"><input type="number" id="s-adv" value="${c.advance_pct ?? 30}" min="0" max="100" step="5" aria-label="Advance percentage" style="padding-left:11px"></div></div></div></section>`;
+}
+function openSettings(){ draft = clone(cat()); renderSettings(); $('settings').hidden = false; $('builder').hidden = true; $('s-toast').textContent=''; window.scrollTo(0,0); }
+function closeSettings(){ $('settings').hidden = true; $('builder').hidden = false; draft = null; }
+
+$('set-body').addEventListener('input', e => {
+  const t = e.target, n = t.value === '' ? null : Math.max(0, Number(t.value)||0);
+  if (t.dataset.p){ draft.packages.find(p => p.code===t.dataset.p)[t.dataset.f] = n ?? 0; }
+  if (t.dataset.cr){ const [c,k] = t.dataset.cr.split('|'); const p = draft.packages.find(x => x.code===c); [...p.includes, ...p.deliverables].find(x => x.k===k).credit_inr = n; }
+  if (t.dataset.ad){ draft.addons.find(a => a.code===t.dataset.ad).unit_inr = n ?? 0; }
+  if (t.id === 's-adv'){ draft.advance_pct = Math.min(100, n ?? 0); }
+});
+$('set-body').addEventListener('change', e => {
+  const t = e.target.closest('[data-rmv]'); if (!t) return;
+  const [c,k] = t.dataset.rmv.split('|'); const p = draft.packages.find(x => x.code===c);
+  [...p.includes, ...p.deliverables].find(x => x.k===k).removable = t.checked;
+  renderSettings();
+});
+$('b-settings').addEventListener('click', openSettings);
+$('s-cancel').addEventListener('click', closeSettings);
+$('s-save').addEventListener('click', async e => {
+  const bad = draft.packages.find(p => p.offer_inr > p.mrp_inr);
+  if (bad){ $('s-toast').textContent = `${bad.name}: the offer price is higher than the full price. Fix it before saving.`; return; }
+  const b = e.currentTarget; b.disabled = true;
+  try {
+    const at = new Date().toISOString();
+    const { data, error } = await sb.from('settings')
+      .upsert({ key: CFG_KEY, value: JSON.stringify({ category: draft, updated_at: at }), note: 'Quote builder prices (maternity). Edited from Quotes > Prices & settings.' })
+      .select('key');
+    if (error || !data || !data.length) throw error || new Error('refused');
+    applyCategory(draft); showSaved(at); closeSettings(); toast('Prices saved. The whole team now quotes with them.');
+  } catch(err){
+    $('s-toast').textContent = 'Could not save. Only admins can change prices; if you are one, check your connection and try again.';
+  } finally { b.disabled = false; }
+});
+
+function showSaved(at){ $('set-meta').textContent = 'Last saved ' + new Date(at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}) + '.'; }
+async function loadLive(){
+  if (!sb) return;
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session){ $('signin').hidden = false; return; }
+  const [cfg, me] = await Promise.all([
+    sb.from('settings').select('value').eq('key', CFG_KEY).maybeSingle(),
+    sb.from('profiles').select('is_admin,active').eq('id', session.user.id).maybeSingle()
+  ]);
+  if (cfg.data && cfg.data.value){
+    try { const v = JSON.parse(cfg.data.value); if (v.category && v.category.packages){ applyCategory(v.category); showSaved(v.updated_at); } } catch {}
+  }
+  if (me.data && me.data.is_admin && me.data.active) $('b-settings').hidden = false;
+}
+if (window.self !== window.top) document.body.classList.add('embedded');
+loadLive().catch(() => {});
+
+render();
+})();
+</script>
+</body>
+</html>
