@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Little Shots Studio OS</title>
 <link rel="stylesheet" href="styles.css">
+<style>
+/* Quotes tab (quotes-tab.js) */
+.main.q{padding-bottom:10px}
+#quoteHost{max-width:1800px;margin:0 auto;padding:0 24px 24px}
+#quoteHost iframe{display:block;width:100%;height:calc(100vh - 150px);min-height:620px;border:1px solid var(--line);
+                  border-radius:var(--radius);background:var(--card)}
+@media(max-width:700px){#quoteHost{padding:0 10px 16px}}
+</style>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23c2557a'/><text y='68' x='50' text-anchor='middle' font-size='46' font-family='sans-serif' font-weight='bold' fill='white'>LS</text></svg>">
 </head>
 <body>
@@ -12,6 +20,10 @@
 <div id="root">
   <div class="loader"><div class="spin"></div>Loading…</div>
 </div>
+
+<!-- The quote builder lives outside #root so re-rendering the app never reloads it
+     and a half-built quote survives switching tabs. Loaded the first time the tab opens. -->
+<div id="quoteHost" hidden><iframe id="quoteFrame" title="Quote builder"></iframe></div>
 
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer">
@@ -25,5 +37,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="views.js"></script>
 <script src="app.js"></script>
+<script src="quotes-tab.js"></script>
 </body>
 </html>
