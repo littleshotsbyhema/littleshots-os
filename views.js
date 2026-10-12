@@ -373,6 +373,7 @@ function jobBody(j, notes, acts) {
     ${slotSection(j)}
     ${handoverSection(j)}
     ${selectionSection(j)}
+    ${approvalSection(j)}
     ${tracksSection(j)}
     ${linksSection(j)}
     ${moveSection(j, nextS, prevS, gateBlocked, gate, b, parked)}
@@ -515,9 +516,10 @@ function selectionSection(j) {
         <p>This job moved past the selection without one on file.</p></div>`;
   return `<div class="sec"><h5>Client selection</h5>${box}
     <div class="acts" style="margin-top:10px">
-      ${live ? `<button class="btn p sm" onclick="A.copySelectionLink(${j.id})">Copy link for WhatsApp</button>
-        ${j.email ? `<button class="btn sm" onclick="A.mailSelectionLink(${j.id})">Email it</button>` : ""}
-        <button class="btn sm" onclick="A.setSelection(${j.id})">Enter it myself</button>` : ""}
+      ${live ? `<button class="btn p sm" onclick="A.copySelectionReminder(${j.id})">Copy reminder for WhatsApp</button>
+        ${j.email ? `<button class="btn sm" onclick="A.mailSelectionReminder(${j.id})">Send a reminder</button>` : ""}
+        <button class="btn sm" onclick="A.setSelection(${j.id})">Enter it myself</button>
+        <button class="btn sm" onclick="A.copySelectionLink(${j.id})">Just the link</button>` : ""}
       ${inHand ? `<button class="btn sm" onclick="A.reopenSelection(${j.id})">Let them change it</button>
         <button class="btn sm" onclick="A.setSelection(${j.id})">Edit the list</button>` : ""}
       ${!inHand && !live ? `<button class="btn p sm" onclick="A.setSelection(${j.id})">Record it</button>` : ""}
@@ -528,6 +530,77 @@ function selectionSection(j) {
       <textarea readonly style="min-height:120px;margin-top:8px"
         onclick="this.select()">${esc(picked.join("\n"))}</textarea></details>` : ""}
   </div>`;
+}
+
+/* Who actually sends work our way — the whole reason the referrer's name is
+   asked for on the enquiry. Hidden until there is something to show. */
+function referrerPanel() {
+  const tally = {};
+  S.jobs.forEach(j => {
+    const n = String(j.referred_by || "").trim();
+    if (n) tally[n] = (tally[n] || 0) + 1;
+  });
+  const rows = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  if (!rows.length) return "";
+  return `<div class="panel"><h3>Who refers you</h3>
+    <p class="ph">Named on the enquiry · ${rows.length === 1
+      ? "1 person" : rows.length + " people"} so far.</p>
+    ${barsHTML(rows)}</div>`;
+}
+
+/* What the client has been asked to sign off, and what they said back.
+   Corrections matter most — they are the one thing here that creates work. */
+function approvalSection(j) {
+  if (archived(j)) return "";
+  const asked = j.pending_approval, fixes = String(j.album_corrections || "").trim();
+  const rev = num(j.album_revision);
+  const rows = [];
+
+  /* what goes to the printer, in their own words */
+  const prints = [
+    j.album_cover_file ? `<b>Album cover:</b> ${esc(j.album_cover_file)}${
+      j.album_size ? " · " + esc(j.album_size) : ""}` : "",
+    j.frame_file ? `<b>Frame:</b> ${esc(j.frame_file)}${
+      j.frame_size ? " · " + esc(j.frame_size) : ""}` : ""
+  ].filter(Boolean);
+
+  if (j.edits_approved_at) {
+    rows.push(`<div class="slot set"><h6>✓ Edited photos approved</h6>
+      <p>The client signed them off ${when(j.edits_approved_at)}.
+        ${prints.length ? "<br>" + prints.join("<br>") : ""}</p></div>`);
+  } else if (asked === "edits") {
+    const wants = [j.has_album ? "the album cover" : "", j.frame_included ? "the frame" : ""]
+      .filter(Boolean).join(" and ");
+    rows.push(`<div class="slot"><h6>Waiting on the client</h6>
+      <p>They have been asked to approve the edited photos${wants
+        ? " and pick the photo for " + wants : ""}. It lands here the moment
+        they answer.</p></div>`);
+  } else if (prints.length) {
+    rows.push(`<div class="slot set"><h6>Chosen for print</h6>
+      <p>${prints.join("<br>")}</p></div>`);
+  }
+
+  if (fixes) {
+    rows.push(`<div class="slot missing"><h6>Album corrections asked for</h6>
+      <p>${rev > 1 ? "Round " + rev + ". " : ""}The album went back to design with these notes:</p>
+      <textarea readonly style="min-height:78px;margin-top:7px"
+        onclick="this.select()">${esc(fixes)}</textarea></div>`);
+  } else if (j.album_approved_at) {
+    rows.push(`<div class="slot set"><h6>✓ Album approved for print</h6>
+      <p>Approved ${when(j.album_approved_at)}${rev ? " after " + rev +
+        " round" + (rev === 1 ? "" : "s") + " of corrections" : ""}.</p></div>`);
+  } else if (asked === "album") {
+    rows.push(`<div class="slot"><h6>Waiting on the client</h6>
+      <p>They are looking at the album design. They can approve it, or send
+        corrections back.</p></div>`);
+  }
+
+  if (!rows.length) return "";
+  return `<div class="sec"><h5>Client approvals</h5>${rows.join("")}
+    ${asked && j.email ? `<div class="acts" style="margin-top:10px">
+      <button class="btn sm" onclick="${asked === "album"
+        ? `A.mailAlbumApproval(${j.id})` : `A.mailEditApproval(${j.id},null)`}">Ask again</button>
+    </div>` : ""}</div>`;
 }
 
 /* video, album and frame — each a process of its own */
@@ -651,6 +724,23 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
 }
 
 function paySection(j, b, gate) {
+  /* A collaboration has a value but no debt. Showing a balance here, or a
+     Record a payment button, would only invite someone to chase it. */
+  if (collab(j)) {
+    return `<div class="sec"><h5>Payment</h5>
+      <div class="paybox">
+        <div class="payrow"><span>Collaboration</span><b>nothing to collect</b></div>
+        <div class="payrow"><span>What it is worth</span><b>${
+          num(j.package_value) ? rupee(j.package_value) : "not valued"}</b></div>
+        ${j.collab_notes ? `<div class="payrow"><span>In return</span>
+          <b style="font-weight:600;text-align:right">${esc(j.collab_notes)}</b></div>` : ""}
+        <div class="acts" style="margin-top:11px">
+          <button class="btn sm" onclick="A.editPackage(${j.id})">Edit package &amp; delivery</button>
+        </div></div>
+      <p class="hint">No payment gate applies to this job, and the client is never
+        shown a price. The value is kept so you can total what you have given away.</p>
+      ${paymentsList(j)}</div>`;
+  }
   return `<div class="sec"><h5>Payment</h5>
     <div class="paybox ${owes(j) ? "owes" : ""}">
       <div class="payrow"><span>Package total</span><b>${num(j.package_value) ? rupee(j.package_value) : "not quoted"}</b></div>
@@ -713,6 +803,9 @@ function accessSection(j, b) {
 
 function detailSection(j) {
   return `<div class="sec"><h5>Details</h5><dl class="kv">
+    <dt>Client</dt><dd><b style="color:var(--ink)">${esc(j.client_name)}</b>
+      <button class="btn sm" style="margin-left:6px" onclick="A.editContact(${j.id})">Edit</button>
+      <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">name, phone and email</div></dd>
     <dt>Location</dt><dd><select class="inp" onchange="A.setJobLoc(${j.id},this.value)">
       ${LOCATIONS.map(l => `<option ${l === j.location ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></dd>
     <dt>Phone</dt><dd>${j.phone
@@ -726,7 +819,9 @@ function detailSection(j) {
         ${j.email ? "Edit" : "Add"}</button></dd>
     <dt>Shoot type</dt><dd><select class="inp" onchange="A.setType(${j.id},this.value)">
       ${typeOptions(j.shoot_type)}</select></dd>
-    <dt>Source</dt><dd>${esc(j.source || "—")}</dd>
+    <dt>Source</dt><dd>${esc(j.source || "—")}${collab(j)
+      ? ' <span class="tag grey">Collaboration</span>' : ""}</dd>
+    ${j.referred_by ? `<dt>Referred by</dt><dd>${esc(j.referred_by)}</dd>` : ""}
     <dt>Venue</dt><dd>${esc(j.venue || "Studio")}${j.venue_address
       ? '<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px">' + esc(j.venue_address) + "</div>" : ""}</dd>
     <dt>Deliverables</dt><dd>${[
@@ -841,6 +936,7 @@ function lifeView() {
   <div class="grid2"><div>
     <div class="panel"><h3>Where enquiries come from</h3><p class="ph">Every job on record.</p>
       ${barsHTML(SOURCES.map(s => [s, S.jobs.filter(j => j.source === s).length]))}</div>
+    ${referrerPanel()}
     <div class="panel"><h3>Shoot types</h3><p class="ph">What the studio is actually selling.</p>
       ${barsHTML(S.types.map(t => [t, S.jobs.filter(j => j.shoot_type === t).length]))}</div>
   </div><div>

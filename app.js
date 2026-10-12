@@ -34,11 +34,11 @@ const PAY_METHODS = ["UPI", "Cash", "Bank transfer", "Card", "Cheque"];
 const needsProof = m => m !== "Cash";
 /* work that runs in parallel becomes a child process with a life of its own */
 const KINDS = [
-  { key: "video", label: "Video", mark: "▶", module: "post",
+  { key: "video", label: "Video", mark: "\u25b6", module: "post",
     applies: j => !!j.has_video },
-  { key: "album", label: "Album", mark: "▣", module: "del",
+  { key: "album", label: "Album", mark: "\u25a3", module: "del",
     applies: j => !!j.has_album },
-  { key: "frame", label: "Frame", mark: "▢", module: "del",
+  { key: "frame", label: "Frame", mark: "\u25a2", module: "del",
     applies: j => !!j.frame_included }
 ];
 const kindDef = k => KINDS.find(x => x.key === k);
@@ -194,7 +194,11 @@ function prevStageFor(job) {
     return sameModule(here, f[i]) ? f[i].name : null;
   return null;
 }
-const bal = j => Math.max(0, num(j.balance));
+/* amount_due is what anyone should actually chase: the balance normally, and
+   nothing at all on a collaboration. Every money gate reads through here, so
+   marking a job a collaboration lifts all of them at once. */
+const bal = j => Math.max(0, num(j.amount_due != null ? j.amount_due : j.balance));
+const collab = j => j.is_collab === true;
 const owes = j => j.payment_status === "PENDING";
 const locked = j => j.file_access === "VIEW-ONLY - downloads OFF";
 const archived = j => !!j.is_parked;
@@ -270,6 +274,19 @@ function editInfoNeeded(job, to) {
   if (!crossing(job, to, "qc_stage")) return false;
   return num(job.photos_edited) <= 0 || !String(job.edited_link || "").trim();
 }
+/* Handing the files over is where the client gets asked to sign them off.
+   Already signed off, or already asked, and we do not ask twice. */
+const editsApprovalNeeded = (job, to) =>
+  crossing(job, to, "digital_stage") && !!String(job.email || "").trim() &&
+  !job.edits_approved_at && job.pending_approval !== "edits";
+/* every email preview in the app looks like this — subject bar, body below */
+const emailBox = d =>
+  `<div style="border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#fff">
+    <div style="background:var(--bg);padding:10px 13px;border-bottom:1px solid var(--line);font-size:12.5px">
+      <b style="color:var(--ink-soft);font-weight:600;margin-right:6px">Subject</b>${esc(d.subject)}</div>
+    <div style="padding:15px 16px;font-size:13px;line-height:1.6;max-height:320px;overflow-y:auto">${
+      esc(d.text).replace(/\n/g, "<br>")}</div>
+  </div>`;
 /* the terms go out by email, so the address comes before anything else */
 function emailNeeded(job, toStage) {
   const st = stageByName(toStage);
@@ -552,11 +569,14 @@ const A = {
   editContact(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
     const must = !!thenStage;
-    modal(`<h3>Contact details</h3>
-      <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
-      <label>Phone</label><input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}"
+    modal(`<h3>Client details</h3>
+      <p class="mh">${esc(j.shoot_type)} · ${esc(j.location)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>Client name</label><input class="inp" id="ctName" value="${esc(j.client_name || "")}"
+        placeholder="e.g. Divya &amp; Karthik">
+      <label style="margin-top:10px">Phone</label>
+      <input class="inp" id="ctPhone" type="tel" value="${esc(j.phone || "")}"
         placeholder="10 digits, or +44… for overseas">
-      <label>Email${must ? " (required)" : " (optional)"}</label>
+      <label style="margin-top:10px">Email${must ? " (required)" : " (optional)"}</label>
       <input class="inp" id="ctEmail" type="email" value="${esc(j.email || "")}"
         placeholder="the terms and booking details are sent here">
       <div class="acts" style="margin-top:16px">
@@ -564,16 +584,23 @@ const A = {
           Save${thenStage ? " and continue" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       ${must ? `<p class="hint">${esc(thenStage)} sends the client their terms and booking
-        details, so there has to be somewhere to send them.</p>` : ""}`);
+        details, so there has to be somewhere to send them.</p>`
+        : `<p class="hint">Fixing a spelling is fine at any stage. The change is logged, and
+           anything already emailed to the client keeps the name it was sent with.</p>`}`);
   },
   async saveContact(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const name = $("ctName").value.trim();
     const phone = $("ctPhone").value.trim();
     const email = $("ctEmail").value.trim() || null;   // read before the modal closes
+    if (!name) return toast("The client needs a name", true);
     if (!phone) return toast("A phone number is required", true);
     if (!phoneOk(phone)) return toast("10 digits, or start with + for an overseas number", true);
     if (thenStage && !email) return toast("An email address is needed before " + thenStage, true);
     A.closeModal();
-    await patch(id, { phone, email }, "Contact updated");
+    const renamed = name !== j.client_name;
+    await patch(id, { client_name: name, phone, email },
+      renamed ? "Renamed to " + name : "Client details updated");
     if (thenStage) await A.moveTo(id, thenStage);
   },
   async setType(id, t) { await patch(id, { shoot_type: t }, "Shoot type set to " + t); },
@@ -666,6 +693,7 @@ const A = {
     if (galleryLinkNeeded(j, to)) return A.setGallery(id, to);
     if (selectionNeeded(j, to)) return A.setSelection(id, to);
     if (editInfoNeeded(j, to)) return A.setEdit(id, to);
+    if (editsApprovalNeeded(j, to)) return A.mailEditApproval(id, to);
     /* the physical work hands the job over itself, and closes itself off.
        The database checks it is finished and says so if it is not. */
     if (to === (S.settings.pickup_stage || "Waiting for Client Pickup") &&
@@ -783,6 +811,10 @@ const A = {
     const f = { gallery_link: link };
     if (thenStage) f.stage = thenStage;
     await patch(id, f, thenStage ? "Gallery shared · moved to " + thenStage : "Gallery link saved");
+    /* a client cannot choose photos nobody told them about, so the email
+       follows the move straight away — shown first, sent on confirm */
+    const j = S.jobs.find(x => x.id === id);
+    if (thenStage && j && j.email) await A.mailSelectionLink(id);
   },
 
   setEdit(id, thenStage) {
@@ -833,12 +865,31 @@ const A = {
         <button class="btn" onclick="A.closeModal()">Done</button></div>
       <p class="hint">Copy this into the WhatsApp group. It stops working once they send their picks.</p>`);
   },
-  /* the same road the terms email takes — studio Gmail, wording from Settings */
-  async mailSelectionLink(id) {
+  /* The nudge, when they have gone quiet. Same links, softer wording, and it
+     is the only record that anyone chased them. */
+  async copySelectionReminder(id) {
     const { data, error } = await sb.functions.invoke("send-selection-email",
-      { body: { job_id: id, preview: true, origin: location.origin } });
+      { body: { job_id: id, channel: "whatsapp", origin: location.origin } });
     if (error || (data && data.error)) return fail(error || new Error(data.error));
-    modal(`<h3>Choose your photos</h3>
+    try {
+      await navigator.clipboard.writeText(data.text);
+      toast("Reminder copied — paste it into the chat");
+    } catch (e) {
+      modal(`<h3>Copy this into WhatsApp</h3>
+        <textarea style="min-height:160px" onclick="this.select()">${esc(data.text)}</textarea>
+        <div class="acts" style="margin-top:16px">
+          <button class="btn" onclick="A.closeModal()">Done</button></div>
+        <p class="hint">Edit this wording in Settings, under the selection reminder.</p>`);
+    }
+  },
+  mailSelectionReminder(id) { return A.mailSelectionLink(id, true); },
+
+  /* the same road the terms email takes — studio Gmail, wording from Settings */
+  async mailSelectionLink(id, reminder) {
+    const { data, error } = await sb.functions.invoke("send-selection-email",
+      { body: { job_id: id, preview: true, reminder: !!reminder, origin: location.origin } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>${reminder ? "A gentle reminder" : "Choose your photos"}</h3>
       <p class="mh">To <b>${esc(data.to)}</b></p>
       <div style="border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#fff">
         <div style="background:var(--bg);padding:10px 13px;border-bottom:1px solid var(--line);font-size:12.5px">
@@ -847,22 +898,22 @@ const A = {
           esc(data.text).replace(/\n/g, "<br>")}</div>
       </div>
       <div class="acts" style="margin-top:16px">
-        <button class="btn p" id="selSend" onclick="A.sendSelectionEmail(${id})">Send it</button>
+        <button class="btn p" id="selSend" onclick="A.sendSelectionEmail(${id},${!!reminder})">Send it</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">Edit the wording in Settings. Sent from
         ${esc(data.sender || "the studio address")}, and the link dies once they send their picks.</p>`);
   },
-  async sendSelectionEmail(id) {
+  async sendSelectionEmail(id, reminder) {
     const btn = $("selSend");
     if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
     const { data, error } = await sb.functions.invoke("send-selection-email",
-      { body: { job_id: id, origin: location.origin } });
+      { body: { job_id: id, reminder: !!reminder, origin: location.origin } });
     if (error || (data && data.error)) {
       if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
       return fail(error || new Error(data.error));
     }
     A.closeModal();
-    await refresh("Selection link emailed to " + data.to);
+    await refresh((reminder ? "Reminder emailed to " : "Selection link emailed to ") + data.to);
   },
   /* the client sent their picks some other way, or changed their mind on the phone */
   setSelection(id, thenStage) {
@@ -906,6 +957,132 @@ const A = {
     await refresh("Link reopened — back at " + (data || "the selection stage"));
   },
 
+  /* ---- the client signs things off ---- */
+  /* Two things ever need approving: the edited photos and the album design.
+     Both go out as a link the client answers on. Both can also be ticked off
+     by hand, because someone who approved over the phone still approved. */
+  async mailEditApproval(id, thenStage) {
+    const { data, error } = await sb.functions.invoke("send-approval-email",
+      { body: { job_id: id, kind: "edits", preview: true, origin: location.origin } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    const q = thenStage ? `'${esc(thenStage)}'` : "null";
+    modal(`<h3>Your edited photos are ready</h3>
+      <p class="mh">To <b>${esc(data.to)}</b></p>
+      ${emailBox(data)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="apSend" onclick="A.sendEditApproval(${id},${q})">
+          ${thenStage ? "Send and move" : "Send it"}</button>
+        <button class="btn" onclick="A.approveEditsByHand(${id},${q})">They already approved</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Edit the wording in Settings. If they approved on the phone or in person,
+        the middle button records that without emailing them.</p>`);
+  },
+  async sendEditApproval(id, thenStage) {
+    const btn = $("apSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-approval-email",
+      { body: { job_id: id, kind: "edits", origin: location.origin } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    if (thenStage) return patch(id, { stage: thenStage },
+      "Sent to " + data.to + " · moved to " + thenStage);
+    await refresh("Sent to " + data.to + " for approval");
+  },
+  /* approved off-system — record it, do not email, and let the move through */
+  async approveEditsByHand(id, thenStage) {
+    A.closeModal();
+    const f = { edits_approved_at: new Date().toISOString(), pending_approval: null };
+    if (thenStage) f.stage = thenStage;
+    await patch(id, f, "Approval recorded" + (thenStage ? " · moved to " + thenStage : ""));
+    await sb.from("job_activity").insert({ job_id: id,
+      action: "edited photos approved by the client, recorded by hand", actor_id: S.me.id });
+  },
+
+  /* the album the client is being asked to sign off has to be visible first */
+  setAlbumProof(childId, thenStep) {
+    const c = S.children.find(x => x.id === childId);
+    const j = S.jobs.find(x => x.id === c.job_id);
+    modal(`<h3>Album design</h3>
+      <p class="mh">${esc(j.client_name)}${thenStep ? " — needed before " + esc(thenStep) : ""}</p>
+      <label>Link to the design the client approves from</label>
+      <input class="inp" id="abLink" value="${esc(j.album_proof_link || "")}"
+        placeholder="https://littleshots.pixieset.com/…">
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveAlbumProof(${childId},${thenStep ? `'${esc(thenStep)}'` : "null"})">
+          Save${thenStep ? " and ask them" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Once they approve, the album goes to print as it is — so this has to be
+        the design you are willing to print.</p>`);
+  },
+  async saveAlbumProof(childId, thenStep) {
+    const c = S.children.find(x => x.id === childId);
+    const link = $("abLink").value.trim();
+    if (!link) return toast("Paste the link to the album design", true);
+    A.closeModal();
+    await patch(c.job_id, { album_proof_link: link }, "Album design link saved");
+    if (thenStep) {
+      const { error } = await sb.from("job_children").update({ stage: thenStep }).eq("id", childId);
+      if (error) return fail(error);
+      await refresh("Album at " + thenStep);
+      await A.mailAlbumApproval(c.job_id);
+    }
+  },
+  async mailAlbumApproval(id) {
+    const { data, error } = await sb.functions.invoke("send-approval-email",
+      { body: { job_id: id, kind: "album", preview: true, origin: location.origin } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>Album design for approval</h3>
+      <p class="mh">To <b>${esc(data.to)}</b></p>
+      ${emailBox(data)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="abSend" onclick="A.sendAlbumApproval(${id})">Send it</button>
+        <button class="btn" onclick="A.closeModal()">Not yet</button></div>
+      <p class="hint">They can approve it or send corrections back on the same link. Corrections
+        walk the album back to design with their notes attached.</p>`);
+  },
+  async sendAlbumApproval(id) {
+    const btn = $("abSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-approval-email",
+      { body: { job_id: id, kind: "album", origin: location.origin } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    await refresh("Album sent to " + data.to + " for approval");
+  },
+
+  /* ---- come and collect it ---- */
+  async mailPickup(id) {
+    const { data, error } = await sb.functions.invoke("send-pickup-email",
+      { body: { job_id: id, preview: true } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>Ready for pickup</h3>
+      <p class="mh">To <b>${esc(data.to)}</b> · ${esc(data.items)}</p>
+      ${emailBox(data)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="pkSend" onclick="A.sendPickup(${id})">Send it</button>
+        <button class="btn" onclick="A.closeModal()">Not yet</button></div>
+      <p class="hint">What this names is read off the package, so it only promises what
+        they actually ordered.</p>`);
+  },
+  async sendPickup(id) {
+    const btn = $("pkSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-pickup-email",
+      { body: { job_id: id } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    await refresh("Told " + data.to + " their " + data.items + " is ready");
+  },
+
   /* ---- child processes ---- */
   async moveChild(childId, to, override) {
     const c = S.children.find(x => x.id === childId);
@@ -915,6 +1092,10 @@ const A = {
     if (!target) return;
     if (c.kind === "video" && target === "Video QC" && !String(j.video_link || "").trim())
       return A.setVideoLink(childId, target);
+    /* nobody can approve an album they cannot see */
+    const albumAsk = S.settings.album_approval_stage || "Waiting for Client Approval to Print";
+    if (c.kind === "album" && target === albumAsk && !String(j.album_proof_link || "").trim())
+      return A.setAlbumProof(childId, target);
     if (childPayGate(j, target) && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed before " + target, true);
     await patchChild(childId, { stage: target },
@@ -922,6 +1103,8 @@ const A = {
     if (override) await sb.from("job_activity").insert({
       job_id: c.job_id, action: "payment override: " + c.kind + " sent to " + target +
         " with " + rupee(bal(j)) + " owing", actor_id: S.me.id });
+    /* the design is parked waiting on them, so ask them now */
+    if (c.kind === "album" && target === albumAsk && j.email) await A.mailAlbumApproval(c.job_id);
   },
   async assignChild(childId, uid) {
     await patchChild(childId, { owner_id: uid || null }, "Reassigned");
@@ -934,6 +1117,14 @@ const A = {
   async readyForPickup(id) {
     const { data, error } = await sb.rpc("ready_for_pickup", { p_job: id });
     if (error) return fail(error);
+    {
+      /* it is theirs and it is finished — the only thing left is telling them */
+      const j = S.jobs.find(x => x.id === id);
+      if (j && j.email && (j.has_album || j.frame_included)) {
+        await refresh("Moved to " + (data || "pickup"));
+        return A.mailPickup(id);
+      }
+    }
     await refresh("Moved to " + (data || "pickup"));
   },
   async restoreVideo(id) {
@@ -1046,6 +1237,16 @@ const A = {
       <label>Total package value (required)</label>
       <input class="inp" id="pkVal" type="number" min="1" value="${num(j.package_value) || ""}" placeholder="e.g. 25000">
 
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="pkCollab"
+        onchange="A.pkSync()" ${j.is_collab ? "checked" : ""}> Collaboration — nothing to collect</label>
+      <div id="pkCollabBox" style="margin-top:6px">
+        <input class="inp" id="pkCollabNote" value="${esc(j.collab_notes || "")}"
+          placeholder="What we get in return — e.g. 3 reels and 2 story posts tagging the studio">
+        <p class="hint" style="margin-top:6px">The value above is still recorded, so you can see
+          what the collaboration was worth — but nothing is owed, no payment gate applies, and
+          the client is never shown a price.</p>
+      </div>
+
       <div class="sec" style="border:0;padding:14px 0 0"><h5>What the client gets</h5>
 
       <div class="f2">
@@ -1100,6 +1301,7 @@ const A = {
     show("pkFrBox", on("pkFr"));
     show("pkAlbOtherWrap", on("pkAlb") && val("pkAlbSize") === "Others");
     show("pkFrOtherWrap", on("pkFr") && val("pkFrSize") === "Others");
+    show("pkCollabBox", on("pkCollab"));
   },
   async savePackage(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
@@ -1110,9 +1312,15 @@ const A = {
     const alb = $("pkAlb").checked, sheets = parseInt($("pkSheets").value || "0", 10) || 0;
     const asize = sizeValue("pkAlbSize", "pkAlbOther");
     const fr = $("pkFr").checked, fsize = sizeValue("pkFrSize", "pkFrOther");
+    const col = $("pkCollab").checked, cnote = $("pkCollabNote").value.trim();
 
     if (v <= 0) return toast("The total package value is required", true);
     if (num(j.amount_received) > v) return toast("They have already paid more than that total", true);
+    /* money already in on a job someone is now calling free needs a decision,
+       not a silent reclassification */
+    if (col && num(j.amount_received) > 0)
+      return toast("This job already has " + rupee(j.amount_received) +
+        " recorded against it, so it can't be a collaboration", true);
     if (ed <= 0) return toast("How many edited photos are included?", true);
     if (vid && !vnote) return toast("Say what the video covers", true);
     if (alb && !asize) return toast("Pick the album size", true);
@@ -1130,8 +1338,9 @@ const A = {
       package_value: v, edited_count: ed, unedited_included: un,
       has_video: vid, video_notes: vid ? vnote : null,
       has_album: alb, album_size: alb ? asize : null, album_sheets: alb ? sheets : null,
-      frame_included: fr, frame_size: fr ? fsize : null
-    }, "Package details saved");
+      frame_included: fr, frame_size: fr ? fsize : null,
+      is_collab: col, collab_notes: col ? (cnote || null) : null
+    }, col ? "Saved as a collaboration — nothing to collect" : "Package details saved");
     if (thenStage) await A.moveTo(id, thenStage);
   },
   async reassign(id, uid) { await patch(id, { owner_id: uid || null }, "Reassigned"); },
@@ -1160,29 +1369,63 @@ const A = {
           ${LOCATIONS.map(l => `<option>${esc(l)}</option>`).join("")}</select></div>
       </div>
       <div class="f2" style="margin-top:9px">
-        <div><label>Where from</label><select class="inp" id="njSrc">
+        <div><label>Where from</label><select class="inp" id="njSrc" onchange="A.njSync()">
           ${SOURCES.map(s => `<option>${esc(s)}</option>`).join("")}</select></div>
         <div><label>Quote (optional)</label><input class="inp" id="njVal" type="number" min="0" placeholder="0"></div>
       </div>
+
+      <div id="njRefBox" style="margin-top:9px">
+        <label>Who referred them? (required)</label>
+        <input class="inp" id="njRef" list="njRefList" autocomplete="off"
+          placeholder="Start typing — past clients will come up">
+        <datalist id="njRefList">${
+          [...new Set(S.jobs.map(x => x.client_name).filter(Boolean))].sort()
+            .map(n => `<option>${esc(n)}</option>`).join("")}</datalist>
+        <p class="hint" style="margin-top:6px">Picking a name you already have keeps the spelling
+          consistent, so referrals can be counted per person later.</p>
+      </div>
+
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="njCollab"
+        onchange="A.njSync()"> Collaboration — nothing to collect</label>
+      <div id="njCollabBox" style="margin-top:6px">
+        <input class="inp" id="njCollabNote"
+          placeholder="What we get in return — e.g. 3 reels and 2 story posts tagging the studio">
+      </div>
+
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveJob()">Add enquiry</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+    A.njSync();
+  },
+  njSync() {
+    const show = (id, on) => { const e = $(id); if (e) e.style.display = on ? "" : "none"; };
+    const src = $("njSrc");
+    show("njRefBox", !!src && src.value === "Referral");
+    show("njCollabBox", !!$("njCollab") && $("njCollab").checked);
   },
   async saveJob() {
     const name = $("njName").value.trim(), phone = $("njPhone").value.trim();
+    const src = $("njSrc").value;
+    const ref = $("njRef").value.trim();
+    const col = $("njCollab").checked, cnote = $("njCollabNote").value.trim();
     if (!name) return toast("Give the client a name", true);
     if (!phone) return toast("A phone number is required", true);
     if (!phoneOk(phone)) return toast("10 digits, or start with + for an overseas number", true);
+    /* a referral with nobody named is the one thing we lose track of later */
+    if (src === "Referral" && !ref) return toast("Who referred them?", true);
     const { error } = await sb.from("jobs").insert({
       client_name: name, phone, email: $("njEmail").value.trim() || null,
       shoot_type: $("njShoot").value,
-      location: $("njLoc").value, source: $("njSrc").value,
+      location: $("njLoc").value, source: src,
+      referred_by: src === "Referral" ? ref : null,
+      is_collab: col, collab_notes: col ? (cnote || null) : null,
       stage: flow()[0].name, package_value: parseFloat($("njVal").value || "0") || 0,
       owner_id: S.me.id
     });
     if (error) return fail(error);
     A.closeModal();
-    await refresh(name + " added");
+    await refresh(name + " added" + (col ? " as a collaboration" : "") +
+      (src === "Referral" ? " · referred by " + ref : ""));
   },
 
   async setSla(stage, v) {
