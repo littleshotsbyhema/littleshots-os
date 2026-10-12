@@ -1082,6 +1082,12 @@ const A = {
                       archive_note: note || null }, "Archived — " + reason);
   },
 
+  setMode(k, m) { S.mode = Object.assign({}, S.mode, { [k]: m }); render(); },
+  sortBy(key) {
+    if (S.sortKey === key) S.sortDir = S.sortDir === "desc" ? "asc" : "desc";
+    else { S.sortKey = key; S.sortDir = "asc"; }
+    render();
+  },
   setSearch(v) {
     S.q = String(v == null ? "" : v);
     render();

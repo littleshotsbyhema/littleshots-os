@@ -187,18 +187,93 @@ function boardView(k) {
       ${ow.length ? `<span class="tag red">${rupee(owedTotal(k))} pending</span>` : ""}
       ${k === "crm" && canSee("archive") ? `<button class="archlink" onclick="A.go('archive')">
         Archive (${archivedJobs().length})</button>` : ""}</div>
-    <p class="sub">${boardSub(k)}</p>${searchBar()}${money}${lock}${sla}
-    ${(ROWS[k] || [{ main: true }]).map(r => r.main
+    <p class="sub">${boardSub(k)}</p>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+      ${modeSwitch(k)}<div style="flex:1;min-width:220px">${searchBar(true)}</div>
+    </div>
+    ${money}${lock}${sla}
+    ${boardMode(k) === "list" ? listHTML(k)
+      : (ROWS[k] || [{ main: true }]).map(r => r.main
         ? `<div class="board">${stages.map(st => colHTML(k, st)).join("")}</div>`
         : childRowHTML(r.kind)).join("")}
-    <p class="hint">Card edge shows SLA state. ₹ means money is owed; a black ⤓ strip means the client's link must stay view-only.</p>`;
+    <p class="hint">${boardMode(k) === "list"
+      ? "Click a column heading to sort. The coloured edge is the SLA state."
+      : "Card edge shows SLA state. ₹ means money is owed; a black ⤓ strip means the client's link must stay view-only."}</p>`;
+}
+/* Board or list. A board is worth looking at when a column holds a dozen jobs;
+   past that it is a list pretending otherwise, so Sales starts as a list. */
+const boardMode = k => (S.mode && S.mode[k]) || (k === "crm" ? "list" : "board");
+function modeSwitch(k) {
+  const m = boardMode(k);
+  return `<div class="modeswitch">
+    <button class="${m === "list" ? "on" : ""}" onclick="A.setMode('${k}','list')">List</button>
+    <button class="${m === "board" ? "on" : ""}" onclick="A.setMode('${k}','board')">Board</button>
+  </div>`;
+}
+/* Every job in one scrollable table. Sales gets the follow-up columns because
+   that is what it is judged on; the other boards get the shoot and the wait. */
+function listHTML(k) {
+  const sales = k === "crm";
+  const rows = pool().filter(j => inMod(j, k));
+  const key = S.sortKey || (sales ? "followup" : "days");
+  const dir = S.sortDir === "desc" ? -1 : 1;
+  const val = (j, kk) => ({
+    client: String(j.client_name || "").toLowerCase(),
+    stage: num(j.stage_no) * 1e6 - num(j.days_in_stage),
+    followup: j.next_followup_on ? Date.parse(j.next_followup_on) : 8.64e15,
+    chased: j.last_followup_at ? Date.parse(j.last_followup_at) : 0,
+    days: -num(j.days_in_stage),
+    shoot: j.shoot_at ? Date.parse(j.shoot_at) : 8.64e15,
+    owner: String(j.owner_name || "~").toLowerCase()
+  })[kk];
+  const sorted = rows.slice().sort((a, b) => {
+    const x = val(a, key), y = val(b, key);
+    return (x > y ? 1 : x < y ? -1 : 0) * dir;
+  });
+  const th = (kk, label) =>
+    `<th onclick="A.sortBy('${kk}')">${label}${key === kk ? (dir === 1 ? " ↑" : " ↓") : ""}</th>`;
+
+  const row = j => `<tr onclick="A.openJob(${j.id})">
+    <td><span class="edge ${slaClass(j)}"></span><b>${esc(j.client_name)}</b>
+      <div class="mute">${esc(j.shoot_type)}${collab(j) ? " · collaboration" : ""}${
+        j.referred_by ? " · via " + esc(j.referred_by) : ""}</div></td>
+    <td>${esc(j.phone || "—")}</td>
+    <td>${esc(j.stage)}<div class="mute">${num(j.days_in_stage)}d</div></td>
+    ${sales ? `<td>${j.next_followup_on
+        ? `${when(j.next_followup_on)}<div class="mute">${chaseState(j)}</div>`
+        : `<span class="pill amber">not set</span>`}</td>
+      <td>${j.last_followup_at ? when(j.last_followup_at) : "never"}
+        <div class="mute">${num(j.followups_count) || 0} logged</div></td>`
+      : `<td>${j.shoot_at ? fmtShoot(j.shoot_at) : (j.shoot_tbd ? "TBD" : "—")}</td>
+         <td>${bal(j) > 0 ? `<span class="pill red">${rupee(bal(j))}</span>`
+            : collab(j) ? `<span class="pill">collab</span>` : `<span class="pill green">clear</span>`}</td>`}
+    <td>${esc(j.owner_name || "unassigned")}</td>
+    <td>${sales ? `<button class="btn sm" onclick="event.stopPropagation();A.logFollowup(${j.id})">Log</button>` : ""}</td>
+  </tr>`;
+
+  if (!sorted.length) {
+    return `<div class="listwrap"><div class="empty" style="padding:26px">${
+      S.q ? "Nothing matches that search." : "Nothing here yet."}</div></div>`;
+  }
+  return `<div class="listwrap"><table>
+    <thead><tr>
+      ${th("client", "Client")}
+      <th style="cursor:default">Phone</th>
+      ${th("stage", "Stage")}
+      ${sales ? th("followup", "Next follow-up") + th("chased", "Last chased")
+              : th("shoot", "Shoot") + `<th style="cursor:default">Money</th>`}
+      ${th("owner", "Owner")}<th style="cursor:default"></th>
+    </tr></thead>
+    <tbody>${sorted.map(row).join("")}</tbody></table></div>
+    <p class="hint">${sorted.length} ${sorted.length === 1 ? "job" : "jobs"} shown.</p>`;
 }
 /* One box for "she's on the phone right now and I need her job".
    Digits look for a phone number, anything else for a name. */
-function searchBar() {
+function searchBar(inline) {
   const q = String(S.q || "");
   const hits = q ? pool().length : 0;
-  return `<div class="searchbar" style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+  return `<div class="searchbar" style="display:flex;align-items:center;gap:9px;${
+    inline ? "" : "margin-bottom:12px"}">
     <input class="inp" id="searchBox" style="max-width:320px" value="${esc(q)}"
       autocomplete="off" inputmode="search"
       placeholder="Search a mobile number or a name"
