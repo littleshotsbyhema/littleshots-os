@@ -74,6 +74,10 @@ function tab(key, label, count, bad) {
 function tabs() {
   let h = "";
   if (canSee("dash")) h += tab("dash", "Dashboard");
+  if (canSee("crm")) {
+    const chase = chaseList().length;
+    h += tab("crm-chase", "Follow-ups", chase || "", chase);
+  }
   BOARDS.filter(canSee).forEach(k => {
     const late = breaches(k).length;
     h += tab(k, MODLABEL[k], late ? late + " late" : pool().filter(j => inMod(j, k)).length, late);
@@ -87,6 +91,7 @@ function tabs() {
 function viewHTML() {
   switch (S.view) {
     case "dash": return dashView();
+    case "crm-chase": return crmView();
     case "pay": return payView();
     case "life": return lifeView();
     case "sla": return slaView();
@@ -182,11 +187,26 @@ function boardView(k) {
       ${ow.length ? `<span class="tag red">${rupee(owedTotal(k))} pending</span>` : ""}
       ${k === "crm" && canSee("archive") ? `<button class="archlink" onclick="A.go('archive')">
         Archive (${archivedJobs().length})</button>` : ""}</div>
-    <p class="sub">${boardSub(k)}</p>${money}${lock}${sla}
+    <p class="sub">${boardSub(k)}</p>${searchBar()}${money}${lock}${sla}
     ${(ROWS[k] || [{ main: true }]).map(r => r.main
         ? `<div class="board">${stages.map(st => colHTML(k, st)).join("")}</div>`
         : childRowHTML(r.kind)).join("")}
     <p class="hint">Card edge shows SLA state. ₹ means money is owed; a black ⤓ strip means the client's link must stay view-only.</p>`;
+}
+/* One box for "she's on the phone right now and I need her job".
+   Digits look for a phone number, anything else for a name. */
+function searchBar() {
+  const q = String(S.q || "");
+  const hits = q ? pool().length : 0;
+  return `<div class="searchbar" style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+    <input class="inp" id="searchBox" style="max-width:320px" value="${esc(q)}"
+      autocomplete="off" inputmode="search"
+      placeholder="Search a mobile number or a name"
+      oninput="A.setSearch(this.value)">
+    ${q ? `<button class="btn sm" onclick="A.clearSearch()">Clear</button>
+      <span class="tag ${hits ? "" : "amber"}">${hits
+        ? hits + (hits === 1 ? " match" : " matches") : "nothing found"}</span>` : ""}
+  </div>`;
 }
 function boardSub(k) {
   return {
@@ -369,6 +389,7 @@ function jobBody(j, notes, acts) {
   return payBanner + slaBanner + `
     ${notesSection(j, notes)}
     ${packageSection(j)}
+    ${followupSection(j)}
     ${emailSection(j)}
     ${slotSection(j)}
     ${handoverSection(j)}
@@ -530,6 +551,112 @@ function selectionSection(j) {
       <textarea readonly style="min-height:120px;margin-top:8px"
         onclick="this.select()">${esc(picked.join("\n"))}</textarea></details>` : ""}
   </div>`;
+}
+
+/* The chase, for a lead that is still in Sales. The next date is the whole
+   point: it is what the lead is judged against, so it leads the panel. */
+function followupSection(j) {
+  if (!isSales(j)) {
+    /* an archived lead still owes an explanation */
+    if (archived(j) && j.archive_reason) {
+      return `<div class="sec"><h5>Why it was archived</h5>
+        <div class="slot missing"><h6>${esc(j.archive_reason)}</h6>
+          ${j.archive_note ? `<p>${esc(j.archive_note)}</p>` : ""}</div></div>`;
+    }
+    return "";
+  }
+  const state = chaseState(j), d = num(j.days_to_followup);
+  const n = num(j.followups_count);
+  const line = state === "Overdue"
+      ? `<div class="slot missing"><h6>${Math.abs(d)} day${Math.abs(d) === 1 ? "" : "s"} overdue</h6>
+          <p>Due ${when(j.next_followup_on)}. Nobody has been back to them since.</p></div>`
+    : state === "Today"
+      ? `<div class="slot"><h6>Due today</h6><p>This is today's list — call or message them.</p></div>`
+    : state === "Upcoming"
+      ? `<div class="slot set"><h6>Next in ${d} day${d === 1 ? "" : "s"}</h6>
+          <p>Due ${when(j.next_followup_on)}.</p></div>`
+      : `<div class="slot missing"><h6>No follow-up set</h6>
+          <p>Nothing scheduled — this lead will go quiet unnoticed.</p></div>`;
+  return `<div class="sec"><h5>Follow-up</h5>${line}
+    <p class="hint" style="margin-top:8px">${n
+      ? n + (n === 1 ? " follow-up" : " follow-ups") + " logged"
+        + (j.last_followup_at ? ", last " + when(j.last_followup_at) : "")
+      : "Never followed up"}.</p>
+    <div class="acts" style="margin-top:9px">
+      <button class="btn p sm" onclick="A.logFollowup(${j.id})">Log a follow-up</button>
+      ${SALES_MOVES[j.stage] ? SALES_MOVES[j.stage].filter(s => s !== "Archive")
+        .map(s => `<button class="btn sm" onclick="A.moveTo(${j.id},'${esc(s)}')">${esc(s)}</button>`)
+        .join("") : ""}
+      ${SALES_MOVES[j.stage] ? `<button class="btn sm" onclick="A.moveTo(${j.id},'${esc(parkedStage())}')">Archive</button>` : ""}
+    </div></div>`;
+}
+
+/* Today's chase list, and the shape of what Sales is sitting on. */
+function crmView() {
+  const mine = S.jobs.filter(j => inLoc(j) && isSales(j));
+  const over = mine.filter(j => chaseState(j) === "Overdue")
+    .sort((a, b) => num(a.days_to_followup) - num(b.days_to_followup));
+  const today = mine.filter(j => chaseState(j) === "Today");
+  const soon = mine.filter(j => chaseState(j) === "Upcoming")
+    .sort((a, b) => num(a.days_to_followup) - num(b.days_to_followup));
+  const cold = mine.filter(j => chaseState(j) === "Not set");
+  const never = mine.filter(j => !num(j.followups_count));
+
+  const row = j => `<tr onclick="A.openJob(${j.id})" style="cursor:pointer">
+    <td><b>${esc(j.client_name)}</b><div style="color:var(--ink-soft);font-size:11.5px">
+      ${esc(j.shoot_type)}${j.referred_by ? " · via " + esc(j.referred_by) : ""}</div></td>
+    <td>${esc(j.stage)}</td>
+    <td>${esc(j.phone || "—")}</td>
+    <td>${j.next_followup_on ? when(j.next_followup_on) : "—"}</td>
+    <td>${num(j.followups_count) || "never"}</td>
+    <td><button class="btn sm" onclick="event.stopPropagation();A.logFollowup(${j.id})">Log</button></td></tr>`;
+
+  const table = (list, empty) => list.length
+    ? `<table class="tbl"><thead><tr><th>Client</th><th>Stage</th><th>Phone</th>
+        <th>Due</th><th>Chased</th><th></th></tr></thead>
+       <tbody>${list.map(row).join("")}</tbody></table>`
+    : `<div class="empty">${esc(empty)}</div>`;
+
+  /* why leads were lost, counted off the archive reasons */
+  const lost = {};
+  S.jobs.filter(j => inLoc(j) && j.archive_reason)
+    .forEach(j => { lost[j.archive_reason] = (lost[j.archive_reason] || 0) + 1; });
+  const lostRows = Object.entries(lost).sort((a, b) => b[1] - a[1]);
+
+  const kpi = [
+    ["Due today", String(today.length), today.length ? "" : ""],
+    ["Overdue", String(over.length), over.length ? "dn" : ""],
+    ["Never chased", String(never.length), never.length ? "dn" : ""],
+    ["Live leads", String(mine.length), ""]
+  ];
+
+  return `<div class="head"><h1>Follow-ups</h1>${locTag()}
+      <span class="tag">${mine.length} live leads</span>
+      ${over.length ? `<span class="tag red">${over.length} overdue</span>` : ""}</div>
+    <p class="sub">Who to call today, and who has been left to go quiet.</p>
+    ${searchBar()}
+    <div class="kpis">${kpi.map(([l, v, d]) => `<div class="kpi"><div class="l">${esc(l)}</div>
+      <div class="v">${esc(v)}</div>${d ? `<div class="d dn">needs attention</div>` : ""}</div>`).join("")}</div>
+
+    <div class="panel"><h3>Overdue</h3>
+      <p class="ph">Promised a follow-up date that has already passed.</p>
+      ${table(over, "Nothing overdue — the list is clean.")}</div>
+
+    <div class="panel"><h3>Due today</h3>
+      <p class="ph">Today's calls and messages.</p>
+      ${table(today, "Nothing due today.")}</div>
+
+    <div class="panel"><h3>No follow-up set</h3>
+      <p class="ph">In Sales with no next date — these are the ones that quietly disappear.</p>
+      ${table(cold, "Every lead has a next date.")}</div>
+
+    <div class="panel"><h3>Coming up</h3>
+      <p class="ph">The next ten, soonest first.</p>
+      ${table(soon.slice(0, 10), "Nothing scheduled ahead.")}</div>
+
+    ${lostRows.length ? `<div class="panel"><h3>Why leads are lost</h3>
+      <p class="ph">Every archived lead with a reason on it.</p>
+      ${barsHTML(lostRows)}</div>` : ""}`;
 }
 
 /* Who actually sends work our way — the whole reason the referrer's name is

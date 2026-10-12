@@ -152,6 +152,7 @@ function canSee(v) {
   if (!S.me || !S.me.active) return false;
   if (isAdmin()) return true;
   if (ALLMODS.includes(v)) return myMods().includes(v);
+  if (v === "crm-chase") return myMods().includes("crm");
   if (v === "pay" || v === "archive") return myMods().some(m => m !== "life");
   if (v === "dash" || v === "sla" || v === "team") return false;
   return true;
@@ -203,7 +204,34 @@ const owes = j => j.payment_status === "PENDING";
 const locked = j => j.file_access === "VIEW-ONLY - downloads OFF";
 const archived = j => !!j.is_parked;
 const inLoc = j => S.loc === "All" || j.location === S.loc;
-const pool = () => S.jobs.filter(j => inLoc(j) && !archived(j) && !j.archived_at);
+const pool = () => S.jobs.filter(j =>
+  inLoc(j) && !archived(j) && !j.archived_at && matchesSearch(j));
+
+/* ---- chasing leads ---- */
+/* a lead Sales still has to chase; past Booked nobody is chasing anything */
+const isSales = j => (j.stage_modules || []).includes("crm") && !j.is_parked;
+const chaseState = j => j.followup_state || "n/a";
+const chaseDue = j => isSales(j) && ["Today", "Overdue"].includes(chaseState(j));
+const chaseList = () => S.jobs.filter(j => inLoc(j) && chaseDue(j))
+  .sort((a, b) => num(a.days_to_followup) - num(b.days_to_followup));
+const archiveReasons = () => String(S.settings.archive_reasons || "")
+  .split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+/* the stages a lead is allowed to move to, mirroring what the database enforces */
+const SALES_MOVES = {
+  "Package Sent": ["Cold Leads", "Hot Leads", "Archive"],
+  "Cold Leads": ["Hot Leads", "Archive"],
+  "Hot Leads": ["Payment Link Shared", "Cold Leads", "Archive"],
+  "Payment Link Shared": ["Booked", "Archive"]
+};
+/* one box: digits look for a phone number, letters for a name */
+function matchesSearch(j) {
+  const q = String(S.q || "").trim().toLowerCase();
+  if (!q) return true;
+  const digits = q.replace(/\D/g, "");
+  if (digits.length >= 3)
+    return String(j.phone || "").replace(/\D/g, "").includes(digits);
+  return String(j.client_name || "").toLowerCase().includes(q);
+}
 const archivedJobs = () => S.jobs.filter(j => inLoc(j) && archived(j));
 const doneJobs = () => S.jobs.filter(j => inLoc(j) && !!j.archived_at);
 const archivedChildren = () => S.children.filter(c => c.state === "archived" && c.kind === "video");
@@ -682,6 +710,15 @@ const A = {
     const j = S.jobs.find(x => x.id === id);
     const st = stageByName(to), bookedOrd = ordOf("booked_stage");
     const crossingIntoBooked = st && !st.is_parked && st.ordinal >= bookedOrd && j.stage_no < bookedOrd;
+    /* Sales moves are a fixed set — refuse here rather than let the database
+       throw, so the person is told what IS allowed */
+    const allowed = SALES_MOVES[j.stage];
+    if (allowed && to !== j.stage && !allowed.includes(to))
+      return toast("A lead at " + j.stage + " can only go to " +
+        allowed.slice(0, -1).join(", ") + " or " + allowed[allowed.length - 1], true);
+    /* and a warm lead going away is worth a reason */
+    if (to === parkedStage() && ["Hot Leads", "Payment Link Shared"].includes(j.stage)
+        && !j.archive_reason) return A.archiveLead(id);
     /* the address first — the package is no use if the terms have nowhere to go */
     if (emailNeeded(j, to)) return A.editContact(id, to);
     if (packageNeeded(j, to)) return A.editPackage(id, to);
@@ -951,6 +988,108 @@ const A = {
       (over ? " · " + over + " over the package" : "") +
       (thenStage ? " · moved to " + thenStage : ""));
   },
+  /* ---- chasing a lead ---- */
+  /* The three things Sales has to record, in one form, because the next
+     follow-up date is what resets the clock and nothing else does. */
+  logFollowup(id) {
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Log a follow-up</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.stage)}${j.phone
+        ? " · " + esc(j.phone) : ""}</p>
+      <label>What did you do?</label>
+      <select class="inp" id="fuKind" onchange="A.fuSync()">
+        <option value="message">Followed up with a message</option>
+        <option value="call">Called them</option>
+      </select>
+      <div id="fuCallBox" style="margin-top:9px">
+        <label>Did they pick up?</label>
+        <select class="inp" id="fuOut" onchange="A.fuSync()">
+          <option value="unanswered">No answer</option>
+          <option value="answered">Yes, we spoke</option>
+        </select>
+      </div>
+      <div style="margin-top:9px">
+        <label id="fuNoteLbl">Notes (optional)</label>
+        <textarea id="fuNote" style="min-height:88px"
+          placeholder="What they asked about, what worried them, what you promised"></textarea>
+      </div>
+      <label style="margin-top:9px">Follow up again in how many days?</label>
+      <input class="inp" id="fuDays" type="number" min="0" max="120" value="3"
+        oninput="A.fuSync()">
+      <p class="hint" id="fuWhen"></p>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveFollowup(${id})">Save follow-up</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Saving this resets the clock — from now on the lead is judged
+        against the date above, not how long it has sat in the column.</p>`);
+    A.fuSync();
+  },
+  fuSync() {
+    const show = (id, on) => { const e = $(id); if (e) e.style.display = on ? "" : "none"; };
+    const kind = $("fuKind").value, out = $("fuOut") ? $("fuOut").value : "";
+    show("fuCallBox", kind === "call");
+    const must = kind === "call" && out === "answered";
+    $("fuNoteLbl").textContent = must ? "What was said (required)" : "Notes (optional)";
+    const d = Math.max(0, parseInt($("fuDays").value || "0", 10) || 0);
+    const when = new Date(); when.setDate(when.getDate() + d);
+    $("fuWhen").textContent = "Next due " + when.toLocaleDateString("en-IN",
+      { weekday: "long", day: "numeric", month: "long" }) + (d === 0 ? " — today" : "");
+  },
+  async saveFollowup(id) {
+    const kind = $("fuKind").value;
+    const out = kind === "call" ? $("fuOut").value : null;
+    const note = $("fuNote").value.trim();
+    /* if they answered, what was said is the only part worth keeping */
+    if (kind === "call" && out === "answered" && !note)
+      return toast("They picked up — what did they say?", true);
+    const d = Math.max(0, parseInt($("fuDays").value || "0", 10) || 0);
+    const next = new Date(); next.setDate(next.getDate() + d);
+    const iso = [next.getFullYear(), String(next.getMonth() + 1).padStart(2, "0"),
+                 String(next.getDate()).padStart(2, "0")].join("-");
+    const { error } = await sb.from("job_followups").insert({
+      job_id: id, kind, outcome: out, notes: note || null,
+      next_followup_on: iso, actor_id: S.me.id
+    });
+    if (error) return fail(error);
+    A.closeModal();
+    await refresh(kind === "message" ? "Message logged · next due " + iso
+      : out === "answered" ? "Call logged · next due " + iso
+      : "No answer logged · next due " + iso);
+  },
+
+  /* a warm lead going away is the most useful thing Sales can tell you */
+  archiveLead(id) {
+    const j = S.jobs.find(x => x.id === id);
+    const reasons = archiveReasons();
+    modal(`<h3>Why didn't they book?</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.stage)}</p>
+      <label>Reason</label>
+      <select class="inp" id="arReason">
+        ${reasons.map(r => `<option>${esc(r)}</option>`).join("")}</select>
+      <label style="margin-top:9px">Anything worth remembering (optional)</label>
+      <textarea id="arNote" style="min-height:80px"
+        placeholder="e.g. loved the work but wanted a smaller album"></textarea>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveArchive(${id})">Archive this lead</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Counted on the Follow-ups board, so the pattern in what you
+        lose is visible rather than guessed at.</p>`);
+  },
+  async saveArchive(id) {
+    const reason = $("arReason").value, note = $("arNote").value.trim();
+    A.closeModal();
+    await patch(id, { stage: parkedStage(), archive_reason: reason,
+                      archive_note: note || null }, "Archived — " + reason);
+  },
+
+  setSearch(v) {
+    S.q = String(v == null ? "" : v);
+    render();
+    const box = $("searchBox");
+    if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+  },
+  clearSearch() { S.q = ""; render(); },
+
   async reopenSelection(id) {
     const { data, error } = await sb.rpc("reopen_selection", { p_job: id });
     if (error) return fail(error);
