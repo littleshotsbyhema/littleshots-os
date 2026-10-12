@@ -66,6 +66,33 @@ input,select,textarea{font:inherit;color:inherit}
 .col-h .sla{font-size:10.5px;color:#a89ca4;margin-top:2px;font-weight:550}
 .col-h .link{font-size:10px;color:var(--rose);font-weight:650;margin-top:2px}
 .col-body{padding:9px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+/* A flex column shrinks its children to fit. With a hundred cards that squashed
+   every card below its own text height, and overflow:hidden cropped the names
+   mid-letter. A card keeps its natural height; the column scrolls instead. */
+.col-body > .card{flex:0 0 auto}
+/* the list view: a dense row is a button, not a card */
+.listwrap{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+          overflow-x:auto;margin-bottom:12px}
+.listwrap table{font-size:12.5px;min-width:760px}
+/* every column but the name stays on one line; the table scrolls sideways on a
+   narrow screen rather than folding each cell into three */
+.listwrap td,.listwrap th{white-space:nowrap}
+.listwrap td:first-child,.listwrap th:first-child{white-space:normal;min-width:180px}
+.listwrap th{position:sticky;top:0;background:var(--card);z-index:1;cursor:pointer;user-select:none}
+.listwrap th:hover{color:var(--rose)}
+.listwrap tbody tr{cursor:pointer}
+.listwrap tbody tr:hover{background:var(--bg)}
+.listwrap td{padding:8px 10px}
+.listwrap .mute{color:var(--ink-soft);font-size:11px;margin-top:1px}
+.listwrap .edge{display:inline-block;width:3px;height:13px;border-radius:2px;
+                margin-right:7px;vertical-align:-2px;background:var(--line)}
+.listwrap .edge.ok{background:var(--green)}
+.listwrap .edge.due{background:var(--amber)}
+.listwrap .edge.late{background:var(--red)}
+.modeswitch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.modeswitch button{border:0;background:var(--card);font:inherit;font-size:12px;font-weight:600;
+                   padding:5px 11px;cursor:pointer;color:var(--ink-soft)}
+.modeswitch button.on{background:var(--rose);color:#fff}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;
       text-align:left;width:100%;transition:.14s;box-shadow:0 1px 2px rgba(36,31,38,.04);position:relative;overflow:hidden}
 .card:hover{border-color:#d9c7d1;box-shadow:var(--shadow);transform:translateY(-1px)}
