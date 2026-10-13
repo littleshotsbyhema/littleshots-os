@@ -1024,6 +1024,12 @@ function detailSection(j) {
     <dt>Source</dt><dd>${esc(j.source || "—")}${collab(j)
       ? ' <span class="tag grey">Collaboration</span>' : ""}</dd>
     ${j.referred_by ? `<dt>Referred by</dt><dd>${esc(j.referred_by)}</dd>` : ""}
+    ${j.booked_by_name ? `<dt>Booked by</dt><dd>${esc(j.booked_by_name)}
+      ${j.booked_at ? `<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px">${
+        when(j.booked_at)}</div>` : ""}</dd>` : ""}
+    ${j.stage_no >= ordOf("booked_stage") ? `<dt>Copyrights</dt><dd>${j.copyrights_included
+      ? '<span class="pill green">included</span>'
+      : '<span class="pill">studio retains</span>'}</dd>` : ""}
     <dt>Venue</dt><dd>${esc(j.venue || "Studio")}${j.venue_address
       ? '<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px">' + esc(j.venue_address) + "</div>" : ""}</dd>
     <dt>Deliverables</dt><dd>${[
@@ -1210,10 +1216,29 @@ function slaView() {
       </tbody></table></div>
   </div><div>
     <div class="panel"><h3>Terms &amp; conditions</h3>
-      <p class="ph">Attached to every terms email. Paste a public link to the PDF.</p>
-      <input class="inp" value="${esc(S.settings.terms_url || "")}" placeholder="https://…"
-        onchange="A.setSetting('terms_url',this.value)">
-      <p class="hint">Without this the email still sends, just with nothing attached.</p></div>
+      <p class="ph">Attached to the terms email. A shoot type with its own document uses
+        that one; the rest fall back to the studio default.</p>
+      <table><tbody>
+        ${S.typeRows.map(t => `<tr><td style="width:110px"><b>${esc(t.name)}</b></td>
+          <td><input class="inp" value="${esc(t.terms_url || "")}" placeholder="same as the default"
+            onchange="A.setTypeDoc('${esc(t.name)}','terms_url',this.value)"></td></tr>`).join("")}
+        <tr><td><b>Studio default</b></td>
+          <td><input class="inp" value="${esc(S.settings.terms_url || "")}" placeholder="https://…"
+            onchange="A.setSetting('terms_url',this.value)"></td></tr>
+      </tbody></table>
+      <p class="hint">Without any of these the email still sends, just with nothing attached.</p></div>
+    <div class="panel"><h3>Get-ready guides</h3>
+      <p class="ph">Attached to the booking confirmation, per shoot type — what a mother
+        needs before a maternity shoot is not what a parent needs before a newborn one.</p>
+      <table><tbody>
+        ${S.typeRows.map(t => `<tr><td style="width:110px"><b>${esc(t.name)}</b></td>
+          <td><input class="inp" value="${esc(t.guide_url || "")}" placeholder="same as the default"
+            onchange="A.setTypeDoc('${esc(t.name)}','guide_url',this.value)"></td></tr>`).join("")}
+        <tr><td><b>Fallback</b></td>
+          <td><input class="inp" value="${esc(S.settings.guide_url_default || "")}" placeholder="used when a type has none"
+            onchange="A.setSetting('guide_url_default',this.value)"></td></tr>
+      </tbody></table>
+      <p class="hint">With none set, the confirmation still goes out — just without a guide.</p></div>
     <div class="panel"><h3>Package PDFs (optional)</h3>
       <p class="ph">Sent alongside the terms, per shoot type.</p>
       <table><tbody>

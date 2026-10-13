@@ -440,7 +440,7 @@ async function loadReference() {
     sb.from("settings").select("key,value"),
     sb.from("profiles").select("id,full_name,email,is_admin,active").order("full_name"),
     sb.from("profile_access").select("profile_id,module"),
-    sb.from("shoot_types").select("name,sort,brochure_url").order("sort")
+    sb.from("shoot_types").select("name,sort,brochure_url,terms_url,guide_url").order("sort")
   ]);
   for (const r of [st, se, pf, pa, ty]) if (r.error) throw r.error;
   S.typeRows = ty.data || [];
@@ -593,6 +593,14 @@ const A = {
     if (error) return fail(error);
     await loadReference(); render(); toast("Brochure updated for " + name);
   },
+  /* a maternity shoot and a newborn shoot need different paperwork */
+  async setTypeDoc(name, field, url) {
+    const patch = {}; patch[field] = url.trim() || null;
+    const { error } = await sb.from("shoot_types").update(patch).eq("name", name);
+    if (error) return fail(error);
+    await loadReference(); render();
+    toast((field === "terms_url" ? "Terms" : "Get-ready guide") + " updated for " + name);
+  },
 
   editContact(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
@@ -656,6 +664,15 @@ const A = {
       <select class="inp" id="bkMethod" onchange="A.paySync('bk')">
         ${PAY_METHODS.map(m => `<option>${esc(m)}</option>`).join("")}</select>
       ${proofFields("bk")}
+
+      <label style="margin-top:12px">Who booked it?</label>
+      <select class="inp" id="bkBy">
+        ${S.people.filter(p => p.active).map(p =>
+          `<option value="${esc(p.id)}" ${p.id === (j.booked_by || S.me.id) ? "selected" : ""}>
+            ${esc(p.full_name)}</option>`).join("")}
+      </select>
+      <label class="chk" style="margin-top:12px"><input type="checkbox" id="bkCopy"
+        ${j.copyrights_included ? "checked" : ""}> Booked with copyrights</label>
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveBooking(${id},'${esc(to)}',false)">Book it</button>
         <button class="btn" onclick="A.saveBooking(${id},'${esc(to)}',true)">Book with date TBD</button>
@@ -675,6 +692,10 @@ const A = {
     const at = slotValue("bk");
     const venue = $("bkVenue").value;
     const addr = $("bkAddr").value.trim();
+    /* read every field while the form is still on screen - closeModal() below
+       wipes it, and anything read after that silently falls back to a default */
+    const by = ($("bkBy") || {}).value || S.me.id;
+    const copy = !!($("bkCopy") || {}).checked;
     if (total <= 0) return toast("The total package value is required", true);
     if (adv <= 0) return toast("Record the advance payment to book this job", true);
     if (adv > total) return toast("The advance cannot be more than the package total", true);
@@ -699,10 +720,46 @@ const A = {
     }
     A.closeModal();
     const f = { stage: to, package_value: total, amount_received: adv,
-                venue, venue_address: venue === "Studio" ? null : addr };
+                venue, venue_address: venue === "Studio" ? null : addr,
+                booked_by: by, copyrights_included: copy };
     if (tbd) { f.shoot_tbd = true; f.shoot_at = null; }
     else { f.shoot_at = at; f.shoot_tbd = false; }
     await patch(id, f, "Booked" + (tbd ? " — date TBD" : " for " + fmtShoot(f.shoot_at)));
+    /* the date is theirs now — tell them, and send the guide with it */
+    const after = S.jobs.find(x => x.id === id);
+    if (after && after.email && after.stage === to) await A.mailBooking(id);
+  },
+
+  /* ---- the booking confirmation ---- */
+  async mailBooking(id) {
+    const { data, error } = await sb.functions.invoke("send-booking-email",
+      { body: { job_id: id, preview: true } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>Confirm the booking with them</h3>
+      <p class="mh">To <b>${esc(data.to)}</b>${data.booked_by
+        ? " · booked by " + esc(data.booked_by) : ""}</p>
+      ${emailBox(data)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="bkSend" onclick="A.sendBooking(${id})">Send it</button>
+        <button class="btn" onclick="A.closeModal()">Not yet</button></div>
+      <p class="hint">${data.has_attachment
+        ? "The get-ready guide for this shoot type is attached."
+        : "No get-ready guide is set for this shoot type, so nothing is attached — " +
+          "you can add one in Settings."}
+        ${data.copyrights ? " Copyrights are stated as included." : ""}</p>`);
+  },
+  async sendBooking(id) {
+    const btn = $("bkSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-booking-email",
+      { body: { job_id: id } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    await refresh("Confirmation sent to " + data.to +
+      (data.attached ? " with the guide" : ""));
   },
 
   async moveTo(id, to, override) {
