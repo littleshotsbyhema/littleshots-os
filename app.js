@@ -113,7 +113,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -296,8 +296,17 @@ function crossing(job, toStage, key) {
   const o = ordOf(key);
   return st.ordinal >= o && job.stage_no < o;
 }
+/* The unedited gallery goes out as the shoot goes into QC, not a stage later:
+   the client can start choosing while the studio checks the shoot over. */
 const galleryLinkNeeded = (job, to) =>
-  crossing(job, to, "selection_stage") && !String(job.gallery_link || "").trim();
+  crossing(job, to, "gallery_link_stage") && !String(job.gallery_link || "").trim();
+/* and the shoot itself is reviewed in QC, before anyone starts editing */
+const QC_VERDICTS = () => String(S.settings.shoot_qc_verdicts ||
+  "Good,Needs attention,Reshoot needed").split(",").map(s => s.trim()).filter(Boolean);
+const shootQcDone = job => !!String(job.shoot_qc_verdict || "").trim() &&
+  !!String(job.shoot_qc_notes || "").trim();
+const shootQcNeeded = (job, to) =>
+  crossing(job, to, "selection_stage") && !shootQcDone(job);
 function editInfoNeeded(job, to) {
   if (!crossing(job, to, "qc_stage")) return false;
   return num(job.photos_edited) <= 0 || !String(job.edited_link || "").trim();
@@ -935,6 +944,7 @@ const A = {
     }
     if (handoverNeeded(j, to)) return A.handover(id, to);
     if (galleryLinkNeeded(j, to)) return A.setGallery(id, to);
+    if (shootQcNeeded(j, to)) return A.shootQc(id, to);
     if (selectionNeeded(j, to)) return A.setSelection(id, to);
     if (editInfoNeeded(j, to)) return A.setEdit(id, to);
     if (editsApprovalNeeded(j, to)) return A.mailEditApproval(id, to);
@@ -1037,16 +1047,17 @@ const A = {
   /* ---- the client's galleries ---- */
   setGallery(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
-    modal(`<h3>Pixieset gallery</h3>
+    modal(`<h3>Unedited files gallery</h3>
       <p class="mh">${esc(j.client_name)}${thenStage ? " — needed before " + esc(thenStage) : ""}</p>
-      <label>Link the client selects from</label>
+      <label>Pixieset link for the unedited files</label>
       <input class="inp" id="glLink" value="${esc(j.gallery_link || "")}"
         placeholder="https://littleshots.pixieset.com/…">
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveGallery(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and move" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
-      <p class="hint">The client picks their photos here, so it has to be live before they are asked.</p>`);
+      <p class="hint">This is the gallery the client picks their photos from, and it goes out
+        to them as soon as you save — so it has to be live first.</p>`);
   },
   async saveGallery(id, thenStage) {
     const link = $("glLink").value.trim();
@@ -1059,6 +1070,47 @@ const A = {
        follows the move straight away — shown first, sent on confirm */
     const j = S.jobs.find(x => x.id === id);
     if (thenStage && j && j.email) await A.mailSelectionLink(id);
+  },
+
+  /* ---- the studio's own check on the shoot ---- */
+  shootQc(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const v = String(j.shoot_qc_verdict || "").trim();
+    modal(`<h3>Shoot review</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage
+        ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>How did the shoot come out?</label>
+      <select class="inp" id="qcVerdict">
+        <option value="">— pick one —</option>
+        ${QC_VERDICTS().map(x => `<option ${x === v ? "selected" : ""}>${esc(x)}</option>`).join("")}
+      </select>
+      <label style="margin-top:10px">What the review found</label>
+      <textarea class="inp" id="qcNotes" rows="4"
+        placeholder="Coverage, focus, lighting, anything the editor should know or anything to reshoot"
+        >${esc(j.shoot_qc_notes || "")}</textarea>
+      <label style="margin-top:10px">Reviewed by</label>
+      <select class="inp" id="qcBy">
+        <option value="">— pick one —</option>
+        ${S.people.filter(p => p.active).map(p => `<option value="${esc(p.id)}"
+          ${p.id === (j.shoot_qc_by || (S.me || {}).id) ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}
+      </select>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveShootQc(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and move" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">This is the studio's own check on the shoot, before the files go
+        anywhere near editing. It stays on the job for whoever picks it up next.</p>`);
+  },
+  async saveShootQc(id, thenStage) {
+    const verdict = $("qcVerdict").value.trim();
+    const notes = $("qcNotes").value.trim();
+    const by = $("qcBy").value || null;
+    if (!verdict) return toast("Pick how the shoot came out", true);
+    if (!notes) return toast("Write up what the review found", true);
+    A.closeModal();
+    const f = { shoot_qc_verdict: verdict, shoot_qc_notes: notes, shoot_qc_by: by };
+    if (thenStage) f.stage = thenStage;
+    await patch(id, f, thenStage ? "Shoot reviewed · moved to " + thenStage : "Shoot review saved");
   },
 
   setEdit(id, thenStage) {

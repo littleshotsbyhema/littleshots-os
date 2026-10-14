@@ -470,6 +470,7 @@ function jobBody(j, notes, acts) {
     ${emailSection(j)}
     ${slotSection(j)}
     ${handoverSection(j)}
+    ${shootQcSection(j)}
     ${selectionSection(j)}
     ${approvalSection(j)}
     ${tracksSection(j)}
@@ -630,12 +631,43 @@ function handoverSection(j) {
     </div></div>`;
 }
 
+/* The studio's own check on the shoot, done while the client is choosing.
+   Nothing reaches an editor until someone has looked the shoot over. */
+function shootQcSection(j) {
+  const qcOrd = ordOf("shoot_qc_stage"), selOrd = ordOf("selection_stage");
+  if (archived(j) || j.stage_no < qcOrd) return "";
+  const verdict = String(j.shoot_qc_verdict || "").trim();
+  const notes = String(j.shoot_qc_notes || "").trim();
+  const done = verdict && notes;
+  const past = j.stage_no >= selOrd;
+  const clean = /^good|^pass|^ok/i.test(verdict);
+  const box = done
+    ? `<div class="slot ${clean ? "set" : ""}">
+        <h6><span class="pill ${clean ? "green" : "amber"}">${esc(verdict)}</span></h6>
+        <p>Reviewed${j.shoot_qc_by_name ? " by <b>" + esc(j.shoot_qc_by_name) + "</b>" : ""}
+          ${j.shoot_qc_at ? when(j.shoot_qc_at) : ""}.</p>
+        <div class="dnote"><span>What it found</span>${esc(notes)}</div></div>`
+    : past
+    ? `<div class="slot"><h6>Never reviewed</h6>
+        <p>This shoot moved on before the review was part of the process.
+          You can still record one.</p></div>`
+    : `<div class="slot missing"><h6>Not reviewed yet</h6>
+        <p>Someone has to look the shoot over and write up what they found before
+          it moves to ${esc(S.settings.selection_stage || "the next stage")}.</p></div>`;
+  return `<div class="sec"><h5>Shoot review</h5>${box}
+    <div class="acts" style="margin-top:10px">
+      <button class="btn ${done ? "sm" : "p sm"}" onclick="A.shootQc(${j.id})">
+        ${done ? "Edit the review" : "Review the shoot"}</button></div></div>`;
+}
+
 /* the client picks their own photos, on their own link */
 function selectionSection(j) {
-  const selOrd = ordOf("selection_stage");
-  if (archived(j) || j.stage_no < selOrd) return "";     // the gallery isn't out yet
+  const selOrd = ordOf("selection_stage"), glOrd = ordOf("gallery_link_stage");
+  if (archived(j) || j.stage_no < glOrd) return "";     // the gallery isn't out yet
   const picked = chosenOf(j), inHand = selectionIn(j), over = selectionOver(j);
-  const live = j.stage_no === selOrd && j.selection_open;
+  /* their link is live from the moment the gallery goes out, which is a stage
+     before the job sits down to wait for them */
+  const live = j.stage_no >= glOrd && j.stage_no <= selOrd && j.selection_open;
   const box = inHand
     ? `<div class="slot set"><h6>✓ ${picked.length} photo${picked.length === 1 ? "" : "s"} chosen</h6>
         <p>Sent in ${when(j.selection_submitted_at)}${num(j.edited_count)
@@ -644,8 +676,11 @@ function selectionSection(j) {
             bill the extras or trim it with them.</b>` : ""}</p></div>`
     : live
     ? `<div class="slot"><h6>Waiting on the client</h6>
-        <p>Their link is live. They list their photos and it lands here by itself —
-          the job moves on to ${esc(nextStageFor(j) || "editing")} the moment they send it.</p></div>`
+        <p>Their link is live. They list their photos and it lands here by itself${
+          j.stage_no < selOrd
+            ? " — their picks will be waiting when the shoot review is done"
+            : " — the job moves on to " + esc(nextStageFor(j) || "editing") +
+              " the moment they send it"}.</p></div>`
     : `<div class="slot missing"><h6>Nothing recorded</h6>
         <p>This job moved past the selection without one on file.</p></div>`;
   return `<div class="sec"><h5>Client selection</h5>${box}
@@ -1056,10 +1091,10 @@ function childRow(j, c) {
 /* every link the client has been given */
 function linksSection(j) {
   const rows = [
-    ["Selection gallery", j.gallery_link, "gallery_link"],
+    ["Unedited files", j.gallery_link, "gallery_link"],
     ["Edited photos", j.edited_link, "edited_link"],
     ["Edited video", j.has_video ? j.video_link : null, "video_link"]
-  ].filter(r => r[1] || (r[2] === "gallery_link" && j.stage_no >= ordOf("selection_stage")));
+  ].filter(r => r[1] || (r[2] === "gallery_link" && j.stage_no >= ordOf("gallery_link_stage")));
   if (archived(j) || !rows.length) return "";
   return `<div class="sec"><h5>Pixieset links</h5><dl class="kv">
     ${rows.map(([label, link]) => `<dt>${label}</dt><dd>${link
@@ -1079,6 +1114,7 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
   const termsGate = nextS && !pkGaps && termsNeeded(j, nextS);
   const held = nextS ? childBlocking2(j, nextS) : null;
   const needGallery = nextS && galleryLinkNeeded(j, nextS);
+  const needQc = nextS && shootQcNeeded(j, nextS);
   const needPicks = nextS && selectionNeeded(j, nextS);
   const needEdit = nextS && editInfoNeeded(j, nextS);
   return `<div class="sec"><h5>Move stage</h5>
@@ -1086,8 +1122,11 @@ function moveSection(j, nextS, prevS, gateBlocked, gate, b, parked) {
       ${esc(nextS)} waits for it.</div>` : ""}
     ${mailGate ? `<div class="alert amber"><b>${esc(nextS)} needs the client's email address first.</b>
       That is where the terms go — you'll be asked for it before anything else.</div>` : ""}
-    ${needGallery ? `<div class="alert amber"><b>${esc(nextS)} needs the Pixieset gallery link.</b>
-      You'll be asked for it.</div>` : ""}
+    ${needGallery ? `<div class="alert amber"><b>${esc(nextS)} needs the Pixieset link for the
+      unedited files.</b> You'll be asked for it, and the client is emailed the gallery
+      as soon as you save it.</div>` : ""}
+    ${needQc ? `<div class="alert amber"><b>The shoot has to be reviewed before ${esc(nextS)}.</b>
+      You'll be asked how it came out and what the review found.</div>` : ""}
     ${needPicks ? `<div class="alert amber"><b>The client hasn't sent their selection yet.</b>
       Their link is live — or you can enter the files yourself when you move it.</div>` : ""}
     ${needEdit ? `<div class="alert amber"><b>${esc(nextS)} needs the edited file count and link.</b>
@@ -1402,7 +1441,8 @@ function slaView() {
            ["shoot_date_from", "TBD no longer accepted from"],
            ["terms_stage", "Email and terms required before"],
            ["gallery_stage", "Shoot debrief required before"],
-           ["selection_stage", "Gallery link required before"],
+           ["gallery_link_stage", "Unedited gallery link required before"],
+           ["selection_stage", "Shoot review required before"],
            ["qc_stage", "Edited count and link required before"],
            ["digital_stage", "Video track must be finished before"],
            ["pickup_stage", "Album and frame must be finished before"]].map(([k, lbl]) => `<tr>
@@ -1489,6 +1529,10 @@ function slaView() {
         Client satisfaction options</label>
       <input class="inp" value="${esc(S.settings.satisfaction_levels || "")}"
         onchange="A.setSetting('satisfaction_levels',this.value)">
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">
+        Shoot review verdicts</label>
+      <input class="inp" value="${esc(S.settings.shoot_qc_verdicts || "")}"
+        onchange="A.setSetting('shoot_qc_verdicts',this.value)">
       <p class="hint">Comma separated, best first. Changing these does not rewrite what
         past shoots already recorded.</p></div>
     <div class="panel"><h3>SLA breach email</h3><p class="ph">Daily summary to the founder.</p>
