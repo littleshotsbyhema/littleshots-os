@@ -440,7 +440,7 @@ async function loadReference() {
     sb.from("settings").select("key,value"),
     sb.from("profiles").select("id,full_name,email,is_admin,active").order("full_name"),
     sb.from("profile_access").select("profile_id,module"),
-    sb.from("shoot_types").select("name,sort,brochure_url,terms_url,guide_url").order("sort")
+    sb.from("shoot_types").select("name,sort,brochure_url,terms_url,guide_url,prep_kind").order("sort")
   ]);
   for (const r of [st, se, pf, pa, ty]) if (r.error) throw r.error;
   S.typeRows = ty.data || [];
