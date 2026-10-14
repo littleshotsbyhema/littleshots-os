@@ -574,23 +574,59 @@ function slotSection(j) {
         <button class="btn p sm" onclick="A.setShoot(${j.id})">Fix this</button></div></div></div>`;
 }
 
-/* the backup and the file count, from the shoot onwards */
+/* Everything captured as the shoot was marked complete. Shown as a read-back
+   rather than a form: the people reading this later are the editors, and what
+   they need is the backup, the crew and anything the client asked for. */
 function handoverSection(j) {
   const gOrd = ordOf("gallery_stage");
   if (archived(j) || j.stage_no < gOrd - 1) return "";     // nothing shot yet
   const has = String(j.backup_location || "").trim(), files = num(j.files_shot);
   const done = has && files > 0;
   const past = j.stage_no >= gOrd;
-  return `<div class="sec"><h5>Shoot handover</h5>
+  const sat = String(j.client_satisfaction || "").trim();
+  const happy = /^very happy|^happy/i.test(sat);
+  const row = (lbl, val) => val
+    ? `<div class="drow"><span>${lbl}</span><b>${val}</b></div>` : "";
+  const note = (lbl, val) => String(val || "").trim()
+    ? `<div class="dnote"><span>${lbl}</span>${esc(String(val).trim())}</div>` : "";
+
+  return `<div class="sec"><h5>Shoot completed</h5>
     <div class="slot ${done ? "set" : past ? "missing" : ""}">
-      <h6>${done ? "✓ Backed up · " + files + " files" : "Backup not recorded"}</h6>
+      <h6>${done ? "✓ Backed up · " + files + " files" : "Shoot details not recorded"}</h6>
       <p>${done
         ? "Kept at <b>" + esc(has) + "</b>."
-        : "Needed before " + esc(S.settings.gallery_stage || "Client Gallery Ready") +
-          " — where the files are backed up, and how many were taken."}</p>
+        : "Needed before " + esc(S.settings.gallery_stage || "Shoot Completed") +
+          " — the backup, who shot it, and how the day went."}</p>
+      ${done ? `<div class="dlist">
+        ${row("Shot by", [j.shoot_photographer_name && esc(j.shoot_photographer_name) + " (camera)",
+                          j.shoot_stylist_name && esc(j.shoot_stylist_name) + " (styling)",
+                          j.shoot_videographer_name && esc(j.shoot_videographer_name) + " (video)"]
+                         .filter(Boolean).join("<br>"))}
+        ${row("Video", num(j.video_files)
+          ? num(j.video_files) + " files" + (j.video_backup_link
+              ? ` · <a href="${esc(j.video_backup_link)}" target="_blank" rel="noopener">backup</a>` : "")
+          : "")}
+        ${row("BTS", j.bts_backup_link
+          ? `<a href="${esc(j.bts_backup_link)}" target="_blank" rel="noopener">backup link</a>` : "")}
+        ${row("Client", sat ? `<span class="pill ${happy ? "green" : "amber"}">${esc(sat)}</span>` : "")}
+        ${row("Follow up", j.shoot_followup_on ? esc(j.shoot_followup_on) : "")}
+        ${row("Thank-you", j.shootdone_sent_at
+          ? '<span class="pill green">sent</span>'
+          : (j.email ? '<span class="pill amber">not sent</span>' : "no email on file"))}
+      </div>
+      ${note("Review", j.shoot_reviews)}
+      ${note("Asked for in the edit", j.edit_feedback)}
+      ${note("Problems", j.shoot_problems)}
+      ${j.upsold ? `<div class="dnote up"><span>Upsold ${rupee(j.upsell_amount)}</span>
+        ${esc(String(j.upsell_notes || "").trim())}
+        ${num(j.upsell_edited_files) ? "<br>+" + num(j.upsell_edited_files) + " edited files" : ""}
+        ${j.upsell_addons ? "<br>" + esc(j.upsell_addons) : ""}
+        <br><span style="color:var(--ink-soft)">already added to the package value</span></div>` : ""}` : ""}
       <div class="acts" style="margin-top:10px">
         <button class="btn ${done ? "sm" : "p sm"}" onclick="A.handover(${j.id})">
-          ${done ? "Edit" : "Record it"}</button></div>
+          ${done ? "Edit" : "Record it"}</button>
+        ${done && j.email ? `<button class="btn sm" onclick="A.mailShootDone(${j.id})">
+          ${j.shootdone_sent_at ? "Send again" : "Send thank-you"}</button>` : ""}</div>
     </div></div>`;
 }
 
@@ -1181,6 +1217,13 @@ function detailSection(j) {
     <dt>Source</dt><dd>${esc(j.source || "—")}${collab(j)
       ? ' <span class="tag grey">Collaboration</span>' : ""}</dd>
     ${j.referred_by ? `<dt>Referred by</dt><dd>${esc(j.referred_by)}</dd>` : ""}
+    ${num(j.stage_no) >= ordOf("booked_stage") && !archived(j)
+      ? `<dt>Shoot crew</dt><dd>${j.photographer_name || j.stylist_name
+          ? `${esc(j.photographer_name || "no photographer")} <span style="color:var(--ink-soft)">camera</span>
+             <div>${esc(j.stylist_name || "no stylist")} <span style="color:var(--ink-soft)">styling</span></div>`
+          : `<span class="pill amber">not assigned</span>`}
+          <button class="btn sm" style="margin-left:6px" onclick="A.setCrew(${j.id},null)">
+            ${j.photographer_name || j.stylist_name ? "Change" : "Assign"}</button></dd>` : ""}
     ${j.booked_by_name ? `<dt>Booked by</dt><dd>${esc(j.booked_by_name)}
       ${j.booked_at ? `<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px">${
         when(j.booked_at)}</div>` : ""}</dd>` : ""}
@@ -1358,7 +1401,7 @@ function slaView() {
            ["booked_stage", "Advance and shoot slot required from"],
            ["shoot_date_from", "TBD no longer accepted from"],
            ["terms_stage", "Email and terms required before"],
-           ["gallery_stage", "Shoot handover required before"],
+           ["gallery_stage", "Shoot debrief required before"],
            ["selection_stage", "Gallery link required before"],
            ["qc_stage", "Edited count and link required before"],
            ["digital_stage", "Video track must be finished before"],
@@ -1428,6 +1471,26 @@ function slaView() {
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
       <textarea style="min-height:170px" onchange="A.setSetting('selection_body',this.value)">${esc(S.settings.selection_body || "")}</textarea>
       <p class="hint">Goes out from the same studio Gmail, with no attachments.</p></div>
+    <div class="panel"><h3>Shoot thank-you email</h3>
+      <p class="ph">Offered the moment a shoot is marked complete. {{client_name}},
+        {{shoot_type}}, {{payment_block}}, {{unedited_days}} and {{unedited_by}} are filled in —
+        {{payment_block}} is dropped entirely for a collaboration, and {{unedited_by}} is the
+        actual date, Sundays skipped.</p>
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Subject</label>
+      <input class="inp" value="${esc(S.settings.shootdone_subject || "")}" onchange="A.setSetting('shootdone_subject',this.value)">
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
+      <textarea style="min-height:170px" onchange="A.setSetting('shootdone_body',this.value)">${esc(S.settings.shootdone_body || "")}</textarea>
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">
+        Working days before the unedited files go out</label>
+      <input class="inp" type="number" min="1" style="max-width:120px"
+        value="${esc(S.settings.unedited_working_days || "3")}"
+        onchange="A.setSetting('unedited_working_days',this.value)">
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">
+        Client satisfaction options</label>
+      <input class="inp" value="${esc(S.settings.satisfaction_levels || "")}"
+        onchange="A.setSetting('satisfaction_levels',this.value)">
+      <p class="hint">Comma separated, best first. Changing these does not rewrite what
+        past shoots already recorded.</p></div>
     <div class="panel"><h3>SLA breach email</h3><p class="ph">Daily summary to the founder.</p>
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Send to</label>
       <input class="inp" value="${esc(S.settings.alert_to || "")}" onchange="A.setSetting('alert_to',this.value)">

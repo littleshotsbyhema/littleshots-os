@@ -307,6 +307,9 @@ function editInfoNeeded(job, to) {
 const editsApprovalNeeded = (job, to) =>
   crossing(job, to, "digital_stage") && !!String(job.email || "").trim() &&
   !job.edits_approved_at && job.pending_approval !== "edits";
+/* prep starts at this stage, and it needs a named photographer and stylist */
+const crewNeeded = (job, to) =>
+  crossing(job, to, "preprod_stage") && (!job.photographer_id || !job.stylist_id);
 /* every email preview in the app looks like this — subject bar, body below */
 const emailBox = d =>
   `<div style="border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#fff">
@@ -403,11 +406,27 @@ function payGateCrossed(job, toStage) {
 /* the same block, for a child step such as Album Printing */
 const childPayGate = (job, toStep) =>
   toStep === S.settings.pay_gate_stage && bal(job) > 0;
-/* what the photographer still owes the studio before the gallery goes out */
+/* The shoot debrief: everything the studio needs off the photographer's hands
+   on the day, before the job becomes someone else's problem. Asked once, as
+   the shoot is marked complete, because by tomorrow nobody remembers which
+   drive it went on or what the client said about the gowns. */
+const SATISFACTION = () => String(S.settings.satisfaction_levels ||
+  "Very happy,Happy,Neutral,Unhappy,Very unhappy").split(",").map(s => s.trim()).filter(Boolean);
+
 function handoverGaps(job) {
   const g = [];
   if (!String(job.backup_location || "").trim()) g.push("where the shoot was backed up");
   if (num(job.files_shot) <= 0) g.push("how many files were taken");
+  if (!job.shoot_photographer_id) g.push("which photographer shot it");
+  if (!job.shoot_stylist_id) g.push("which stylist worked it");
+  if (job.has_video) {
+    if (!job.shoot_videographer_id) g.push("who shot the video");
+    if (num(job.video_files) <= 0) g.push("how many video files there are");
+    if (!String(job.video_backup_link || "").trim()) g.push("the video backup link");
+  }
+  if (!String(job.client_satisfaction || "").trim()) g.push("how happy the client was");
+  if (job.upsold && !String(job.upsell_notes || "").trim()) g.push("what was upsold");
+  if (job.upsold && num(job.upsell_amount) <= 0) g.push("the upsell amount");
   if (bal(job) > 0) g.push("the payment collected at the shoot");
   return g;
 }
@@ -529,6 +548,41 @@ const A = {
   setLoc(l) { S.loc = l; closeDrawer(); render(); },
   archiveTab(t) { S.archiveTab = t; render(); },
   openJob(id) { openJob(id).catch(fail); },
+
+  /* ---- who is shooting it ---- */
+  /* Asked when prep starts, because the checklist is work for named people.
+     Deliberately separate from the owner: whoever runs the job through the
+     system is often not the one behind the camera. */
+  setCrew(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
+    const team = S.people.filter(p => p.active);
+    const pick = (sel, chosen) => `<select class="inp" id="${sel}">
+      <option value="">— not assigned —</option>
+      ${team.map(p => `<option value="${esc(p.id)}" ${p.id === chosen ? "selected" : ""}>
+        ${esc(p.full_name)}</option>`).join("")}</select>`;
+    modal(`<h3>Who is on this shoot?</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage
+        ? " — needed before " + esc(thenStage) : ""}</p>
+      <label>Photographer</label>${pick("cwPhot", j.photographer_id)}
+      <label style="margin-top:10px">Stylist</label>${pick("cwSty", j.stylist_id)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveCrew(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
+          Save${thenStage ? " and continue" : ""}</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Both are needed before pre-production starts — the checklist
+        is work for named people, not for the job in general. Either can be changed later.</p>`);
+  },
+  async saveCrew(id, thenStage) {
+    const phot = $("cwPhot").value || null;
+    const sty = $("cwSty").value || null;
+    if (thenStage && (!phot || !sty))
+      return toast("Pick both a photographer and a stylist", true);
+    A.closeModal();
+    const f = { photographer_id: phot, stylist_id: sty };
+    if (thenStage) f.stage = thenStage;
+    const names = [phot && nameOf(phot), sty && nameOf(sty)].filter(Boolean).join(" and ");
+    await patch(id, f, names ? "Shoot crew: " + names : "Crew cleared");
+  },
 
   /* ---- the pre-production sheet ---- */
   /* Its own screen: 66 items will not fit in a 428px drawer, and whoever is
@@ -859,8 +913,17 @@ const A = {
     /* and a warm lead going away is worth a reason */
     if (to === parkedStage() && ["Hot Leads", "Payment Link Shared"].includes(j.stage)
         && !j.archive_reason) return A.archiveLead(id);
+    /* the address first — the package is no use if the terms have nowhere to go */
+    if (emailNeeded(j, to)) return A.editContact(id, to);
+    if (packageNeeded(j, to)) return A.editPackage(id, to);
+    if (termsNeeded(j, to)) return A.previewEmail(id, to);
+    if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
+      return A.bookJob(id, to);
+    if (slotNeeded(j, to)) return A.setShoot(id, to);
+    /* the date comes first, then who is doing it — prep is work for named people */
+    if (crewNeeded(j, to)) return A.setCrew(id, to);
     /* Pre-production gates both of its phases. Open the sheet rather than just
-       refusing - the next thing they need is the list, not an error. */
+       refusing — the next thing they need is the list, not an error. */
     const prepPhase = to === (S.settings.preprod_complete_stage || "Pre-Prod Complete") ? 1
                     : to === (S.settings.shoot_ready_stage || "Shoot Ready") ? 2 : 0;
     if (prepPhase && prepKindFor(j)) {
@@ -870,13 +933,6 @@ const A = {
         return A.openPrep(id, prepPhase);
       }
     }
-    /* the address first — the package is no use if the terms have nowhere to go */
-    if (emailNeeded(j, to)) return A.editContact(id, to);
-    if (packageNeeded(j, to)) return A.editPackage(id, to);
-    if (termsNeeded(j, to)) return A.previewEmail(id, to);
-    if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
-      return A.bookJob(id, to);
-    if (slotNeeded(j, to)) return A.setShoot(id, to);
     if (handoverNeeded(j, to)) return A.handover(id, to);
     if (galleryLinkNeeded(j, to)) return A.setGallery(id, to);
     if (selectionNeeded(j, to)) return A.setSelection(id, to);
@@ -1352,6 +1408,39 @@ const A = {
     await refresh("Album sent to " + data.to + " for approval");
   },
 
+  /* ---- thanking them the evening of the shoot ---- */
+  /* Offered rather than sent silently: the amounts are in it, and a wrong
+     number in a thank-you is worse than no thank-you. */
+  async mailShootDone(id) {
+    const j = S.jobs.find(x => x.id === id);
+    if (j && !j.email) return;
+    const { data, error } = await sb.functions.invoke("send-shoot-done-email",
+      { body: { job_id: id, preview: true } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>Thank the client</h3>
+      <p class="mh">To <b>${esc(data.to)}</b> · ${data.collab
+        ? "collaboration, no amounts shown"
+        : rupee(data.paid) + " received" + (data.balance ? ", " + rupee(data.balance) + " pending" : ", nothing pending")}</p>
+      ${emailBox(data)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="sdSend" onclick="A.sendShootDone(${id})">Send it</button>
+        <button class="btn" onclick="A.closeModal()">Not now</button></div>
+      <p class="hint">The ${data.days}-working-day promise comes from Prices &amp; settings,
+        and Sundays are skipped when working out the date.</p>`);
+  },
+  async sendShootDone(id) {
+    const btn = $("sdSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-shoot-done-email",
+      { body: { job_id: id } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    await refresh("Thank-you sent to " + data.to);
+  },
+
   /* ---- come and collect it ---- */
   async mailPickup(id) {
     const { data, error } = await sb.functions.invoke("send-pickup-email",
@@ -1454,21 +1543,87 @@ const A = {
     await refresh("Video link saved");
   },
 
-  /* ---- handing the shoot over to the studio ---- */
+  /* ---- marking the shoot complete ---- */
+  /* One long form on purpose. Every field here is something only the people
+     who were at the shoot can answer, and they are standing in the studio
+     packing up — asking them twice means getting it once. */
   handover(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
     const b = bal(j);
-    modal(`<h3>Shoot handover</h3>
+    const team = S.people.filter(p => p.active);
+    const pick = (sel, chosen, blank) => `<select class="inp" id="${sel}">
+      <option value="">— ${blank} —</option>
+      ${team.map(p => `<option value="${esc(p.id)}" ${p.id === chosen ? "selected" : ""}>
+        ${esc(p.full_name)}</option>`).join("")}</select>`;
+
+    modal(`<h3>Shoot completed</h3>
       <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage
         ? " — needed before " + esc(thenStage) : ""}</p>
+
+      <p class="shead">Files and backup</p>
       <label>Where is the backup?</label>
       <input class="inp" id="hoBackup" value="${esc(j.backup_location || "")}"
         placeholder="e.g. Studio HDD 3 + Google Drive">
       <label style="margin-top:10px">How many files were taken?</label>
       <input class="inp" id="hoFiles" type="number" min="1" value="${num(j.files_shot) || ""}"
         placeholder="e.g. 840">
+      <label style="margin-top:10px">Behind-the-scenes backup link <span class="opt">optional</span></label>
+      <input class="inp" id="hoBts" value="${esc(j.bts_backup_link || "")}"
+        placeholder="Where the BTS footage went">
+
+      <p class="shead">Who shot it</p>
+      <label>Photographer</label>${pick("hoPhot", j.shoot_photographer_id || j.photographer_id, "pick one")}
+      <label style="margin-top:10px">Stylist</label>${pick("hoSty", j.shoot_stylist_id || j.stylist_id, "pick one")}
+      ${j.has_video ? `
+        <label style="margin-top:10px">Videographer</label>${pick("hoVid", j.shoot_videographer_id, "pick one")}
+        <label style="margin-top:10px">How many video files?</label>
+        <input class="inp" id="hoVidFiles" type="number" min="1" value="${num(j.video_files) || ""}"
+          placeholder="e.g. 36">
+        <label style="margin-top:10px">Video backup link</label>
+        <input class="inp" id="hoVidBackup" value="${esc(j.video_backup_link || "")}"
+          placeholder="Where the footage went">`
+      : `<p class="hint" style="margin-top:8px">No video in this package, so nothing to record for it.</p>`}
+
+      <p class="shead">How the day went</p>
+      <label>How happy was the client?</label>
+      <select class="inp" id="hoSat">
+        <option value="">— pick one —</option>
+        ${SATISFACTION().map(s => `<option ${s === j.client_satisfaction ? "selected" : ""}>${esc(s)}</option>`).join("")}
+      </select>
+      <label style="margin-top:10px">Any review given on the day <span class="opt">optional</span></label>
+      <textarea class="inp" id="hoReview" rows="2"
+        placeholder="What they said, or where they posted it">${esc(j.shoot_reviews || "")}</textarea>
+      <label style="margin-top:10px">Editing notes from the client <span class="opt">optional</span></label>
+      <textarea class="inp" id="hoEditFb" rows="2"
+        placeholder="Anything they asked for in the edit">${esc(j.edit_feedback || "")}</textarea>
+      <label style="margin-top:10px">Problems during the shoot <span class="opt">optional</span></label>
+      <textarea class="inp" id="hoProblem" rows="2"
+        placeholder="Anything that went wrong, so it does not happen twice">${esc(j.shoot_problems || "")}</textarea>
+      <label style="margin-top:10px">Next follow-up for this shoot <span class="opt">optional</span></label>
+      <input class="inp" id="hoFollow" type="date" value="${esc(j.shoot_followup_on || "")}">
+
+      <p class="shead">Upselling</p>
+      <label class="chk"><input type="checkbox" id="hoUp" onchange="A.hoSync(${id})"
+        ${j.upsold ? "checked" : ""}> Something was sold on the day</label>
+      <div id="hoUpBox" style="margin-top:6px">
+        <label>What was sold?</label>
+        <textarea class="inp" id="hoUpNotes" rows="2"
+          placeholder="e.g. 10 extra edits and a 12x18 frame">${esc(j.upsell_notes || "")}</textarea>
+        <label style="margin-top:10px">Additional edited files <span class="opt">optional</span></label>
+        <input class="inp" id="hoUpFiles" type="number" min="0" value="${num(j.upsell_edited_files) || ""}"
+          placeholder="Added to the agreed count">
+        <label style="margin-top:10px">Add-on album or frame <span class="opt">optional</span></label>
+        <input class="inp" id="hoUpAddons" value="${esc(j.upsell_addons || "")}"
+          placeholder="e.g. Frame 12x18">
+        <label style="margin-top:10px">Amount to add</label>
+        <input class="inp" id="hoUpAmt" type="number" min="1" value="${num(j.upsell_amount) || ""}"
+          oninput="A.hoSync(${id})" placeholder="e.g. 6000">
+        <p class="hint" id="hoUpNote" style="margin-top:6px"></p>
+      </div>
+
       ${thenStage ? (b > 0
-        ? `<label style="margin-top:10px">Payment collected (required)</label>
+        ? `<p class="shead">Payment collected</p>
+           <label>Amount collected (required)</label>
            <input class="inp" id="hoPay" type="number" min="1" max="${b}" placeholder="${rupee(b)} outstanding">
            <label style="margin-top:10px">How did it come in?</label>
            <select class="inp" id="hoMethod" onchange="A.paySync('ho')">
@@ -1478,18 +1633,54 @@ const A = {
              ${rupee(j.package_value)}. The balance can stay outstanding — printing is blocked at
              ${esc(S.settings.pay_gate_stage || "Album Printing")}.</p>`
         : `<div class="alert green" style="margin-top:12px"><b>Fully paid.</b> Nothing to collect.</div>`) : ""}
+
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveHandover(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and move" : ""}</button>
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
-      <p class="hint">The client's gallery becomes shareable from ${esc(S.settings.share_from_stage || "")},
-        so the backup has to be safe first.</p>`);
+      <p class="hint">A thank-you email goes to the client after this, with the amount
+        collected and when the unedited files will reach them.</p>`);
     A.paySync("ho");
+    A.hoSync(id);
   },
+
+  /* the upsell block is hidden until it applies, and shows what it does to the bill */
+  hoSync(id) {
+    const on = ($("hoUp") || {}).checked;
+    const box = $("hoUpBox");
+    if (box) box.style.display = on ? "" : "none";
+    const note = $("hoUpNote");
+    if (note && on) {
+      const add = parseFloat(($("hoUpAmt") || {}).value || "0") || 0;
+      const j = S.jobs.find(x => x.id === id);
+      note.textContent = add > 0 && j
+        ? "The package goes from " + rupee(j.package_value) + " to " +
+          rupee(num(j.package_value) + add) + ", so the balance adjusts with it."
+        : "This is added to the package value, so the final bill adjusts.";
+    }
+  },
+
   async saveHandover(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
-    const backup = $("hoBackup").value.trim();
-    const files = parseInt($("hoFiles").value || "0", 10) || 0;
+    const v = k => (($(k) || {}).value || "").trim();
+    const backup = v("hoBackup");
+    const files = parseInt(v("hoFiles") || "0", 10) || 0;
+    const phot = v("hoPhot") || null;
+    const sty = v("hoSty") || null;
+    const vid = v("hoVid") || null;
+    const vidFiles = parseInt(v("hoVidFiles") || "0", 10) || 0;
+    const vidBackup = v("hoVidBackup");
+    const sat = v("hoSat");
+    const up = (($("hoUp") || {}).checked) === true;
+    const upAmt = parseFloat(v("hoUpAmt") || "0") || 0;
+    const upNotes = v("hoUpNotes");
+    /* Every field is read here, before the modal closes. Reading one of them
+       further down - after closeModal has torn the form out of the DOM - is
+       how "who booked it" silently went missing once already. */
+    const bts = v("hoBts"), review = v("hoReview"), editFb = v("hoEditFb");
+    const problem = v("hoProblem"), follow = v("hoFollow");
+    const upFiles = parseInt(v("hoUpFiles") || "0", 10) || null;
+    const upAddons = v("hoUpAddons");
     const payEl = $("hoPay");
     const pay = payEl ? (parseFloat(payEl.value || "0") || 0) : 0;
     const method = ($("hoMethod") || {}).value || "Cash";
@@ -1498,11 +1689,23 @@ const A = {
 
     if (!backup) return toast("Say where the shoot was backed up", true);
     if (files <= 0) return toast("Enter how many files were taken", true);
-    if (thenStage && b > 0) {
-      if (pay <= 0) return toast("Record the payment collected at the shoot", true);
-      if (pay > b) return toast("That is more than the " + rupee(b) + " outstanding", true);
-      if (needsProof(method) && !file)
-        return toast("A " + method + " payment needs a screenshot", true);
+    if (thenStage) {
+      if (!phot) return toast("Say which photographer shot it", true);
+      if (!sty) return toast("Say which stylist worked the shoot", true);
+      if (j.has_video) {
+        if (!vid) return toast("Say who shot the video", true);
+        if (vidFiles <= 0) return toast("Enter how many video files were taken", true);
+        if (!vidBackup) return toast("Add the video backup link", true);
+      }
+      if (!sat) return toast("Record how happy the client was", true);
+      if (up && !upNotes) return toast("Say what was upsold", true);
+      if (up && upAmt <= 0) return toast("Enter the amount to add for the upsell", true);
+      if (b > 0) {
+        if (pay <= 0) return toast("Record the payment collected at the shoot", true);
+        if (pay > b) return toast("That is more than the " + rupee(b) + " outstanding", true);
+        if (needsProof(method) && !file)
+          return toast("A " + method + " payment needs a screenshot", true);
+      }
     }
     /* the money gets its own record before the job's total moves */
     if (pay > 0) {
@@ -1516,12 +1719,31 @@ const A = {
       } catch (e) { return fail(e); }
     }
     A.closeModal();
-    const f = { backup_location: backup, files_shot: files };
+    const f = {
+      backup_location: backup, files_shot: files,
+      bts_backup_link: bts || null,
+      shoot_photographer_id: phot, shoot_stylist_id: sty,
+      shoot_videographer_id: j.has_video ? vid : null,
+      video_files: j.has_video && vidFiles ? vidFiles : null,
+      video_backup_link: j.has_video ? (vidBackup || null) : null,
+      client_satisfaction: sat || null,
+      shoot_reviews: review || null,
+      edit_feedback: editFb || null,
+      shoot_problems: problem || null,
+      shoot_followup_on: follow || null,
+      upsold: up,
+      upsell_notes: up ? upNotes : null,
+      upsell_edited_files: up ? upFiles : null,
+      upsell_addons: up ? (upAddons || null) : null,
+      upsell_amount: up ? upAmt : null
+    };
     if (thenStage) f.stage = thenStage;
     if (pay > 0) f.amount_received = num(j.amount_received) + pay;
     await patch(id, f, thenStage
-      ? "Handed over" + (pay > 0 ? " · " + rupee(pay) + " recorded" : "") + " · moved to " + thenStage
-      : "Shoot handover updated");
+      ? "Shoot completed" + (pay > 0 ? " · " + rupee(pay) + " recorded" : "") +
+        (up ? " · " + rupee(upAmt) + " upsold" : "") + " · moved to " + thenStage
+      : "Shoot details updated");
+    if (thenStage) A.mailShootDone(id);
   },
 
   /* ---- the price and exactly what the client is getting ---- */

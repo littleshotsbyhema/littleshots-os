@@ -253,6 +253,25 @@ textarea:focus{outline:2px solid var(--rose-soft);border-color:#d9c7d1;backgroun
 .btn.dark{background:#3d333a;border-color:#4a3f46;color:#fff}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 select.inp,input.inp{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.5px;background:var(--card);width:100%}
+/* a textarea inside a form row should match its inputs, and let rows decide
+   the height rather than the 62px floor the standalone note boxes need */
+textarea.inp{padding:7px 9px;font-size:12.5px;background:var(--card);min-height:0}
+/* the shoot-completed form is long enough to need signposting */
+.modalbox p.shead{margin:20px 0 2px;font-size:11px;font-weight:700;letter-spacing:.06em;
+                  text-transform:uppercase;color:var(--rose);
+                  border-top:1px solid var(--line);padding-top:13px}
+.modalbox p.shead:first-of-type{border-top:0}
+.opt{font-weight:500;color:#b0a6ae;text-transform:none;letter-spacing:0}
+/* the debrief read-back in the drawer */
+.dlist{margin-top:11px;border-top:1px solid rgba(0,0,0,.07);padding-top:9px}
+.drow{display:flex;gap:10px;align-items:baseline;font-size:12px;padding:3px 0}
+.drow>span{flex:0 0 76px;color:var(--ink-soft)}
+.drow>b{flex:1;font-weight:600;line-height:1.5}
+.dnote{margin-top:8px;font-size:12px;line-height:1.5;background:var(--card);
+       border:1px solid var(--line);border-radius:8px;padding:8px 10px;white-space:pre-wrap}
+.dnote>span{display:block;font-size:10.5px;font-weight:700;letter-spacing:.04em;
+            text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px}
+.dnote.up{background:var(--green-soft);border-color:#cfe6dc}
 .chip{font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:99px;border:1px solid var(--line);
       background:var(--card);color:var(--ink-soft)}
 .chip:hover{border-color:#d9c7d1}
