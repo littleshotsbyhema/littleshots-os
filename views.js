@@ -91,6 +91,7 @@ function tabs() {
 function viewHTML() {
   switch (S.view) {
     case "dash": return dashView();
+    case "prep": return prepView();
     case "crm-chase": return crmView();
     case "pay": return payView();
     case "life": return lifeView();
@@ -464,6 +465,7 @@ function jobBody(j, notes, acts) {
   return payBanner + slaBanner + `
     ${notesSection(j, notes)}
     ${packageSection(j)}
+    ${prepSection(j)}
     ${followupSection(j)}
     ${emailSection(j)}
     ${slotSection(j)}
@@ -732,6 +734,161 @@ function crmView() {
     ${lostRows.length ? `<div class="panel"><h3>Why leads are lost</h3>
       <p class="ph">Every archived lead with a reason on it.</p>
       ${barsHTML(lostRows)}</div>` : ""}`;
+}
+
+/* The way into the sheet from the job, and the only place its progress shows
+   without opening it. Hidden once the shoot is past Shoot Ready. */
+function prepSection(j) {
+  if (archived(j)) return "";
+  const kind = prepKindFor(j);
+  const readyOrd = ordOf("shoot_ready_stage");
+  if (!kind || num(j.stage_no) < ordOf("booked_stage") || num(j.stage_no) > readyOrd) return "";
+  const live = S.prepJob === j.id && (S.prep || []).length;
+  const c1 = live ? prepCounts(1) : null, c2 = live ? prepCounts(2) : null;
+  return `<div class="sec"><h5>Pre-production</h5>
+    <div class="slot">
+      <h6>${esc(kind === "maternity" ? "Maternity" : "Baby")} checklist</h6>
+      <p>${live
+        ? `Phase 1: ${c1.done} of ${c1.total} · Phase 2: ${c2.done} of ${c2.total}`
+        : "Everything to verify before the shoot, in two phases."}</p>
+    </div>
+    <div class="acts" style="margin-top:9px">
+      <button class="btn p sm" onclick="A.openPrep(${j.id},1)">Open the checklist</button>
+    </div></div>`;
+}
+
+/* ------------------------------------------- pre-production sheet */
+/* One control per item, driven by the template. The sheet's 19 input spellings
+   became 8 controls plus flags, so this renders all of them. */
+function prepControl(r) {
+  const a = r.answer || {};
+  const v = a.value == null ? "" : a.value;
+  const id = r.template_id;
+  const set = `A.prepValue(${id},this.value)`;
+  switch (r.control) {
+    case "number":
+      return `<input class="inp pv" type="number" value="${esc(v)}" onchange="${set}">`;
+    case "date":
+      return `<input class="inp pv" type="date" value="${esc(v)}" onchange="${set}">`;
+    case "time":
+      return `<input class="inp pv" type="time" value="${esc(v)}" onchange="${set}">`;
+    case "datetime":
+      return `<input class="inp pv" type="datetime-local" value="${esc(v)}" onchange="${set}">`;
+    case "text":
+      return `<textarea class="inp" style="min-height:62px" onchange="${set}"
+        placeholder="${esc(r.description || "")}">${esc(v)}</textarea>`;
+    case "upload":
+      return `<div class="pup"><input class="inp" value="${esc(v)}" onchange="${set}"
+          placeholder="Paste a link to the photo or file${r.must_upload ? " (required)" : ""}">
+        ${v ? `<a class="plink" href="${esc(v)}" target="_blank" rel="noreferrer noopener">open ↗</a>` : ""}</div>`;
+    case "select":
+      return `<input class="inp" value="${esc(v)}" onchange="${set}"
+        placeholder="Who / which one">`;
+    case "yesno": {
+      const opt = (lab, val) => `<button class="${a.value === val ? "on" : ""}"
+        onclick="A.prepValue(${id},'${val}')">${lab}</button>`;
+      return `<div class="seg">${opt("Yes", "yes")}${opt("No", "no")}${
+        r.allow_unknown ? opt("Unknown", "unknown") : ""}</div>`;
+    }
+    default: return "";
+  }
+}
+
+function prepView() {
+  const j = S.jobs.find(x => x.id === S.prepJob);
+  if (!j) return `<div class="head"><h1>Pre-production</h1></div>
+    <p class="sub">That job is no longer open.</p>`;
+  const phase = S.prepPhase || 1;
+  const c1 = prepCounts(1), c2 = prepCounts(2);
+  const here = phase === 1 ? c1 : c2;
+  const target = phase === 1
+    ? (S.settings.preprod_complete_stage || "Pre-Prod Complete")
+    : (S.settings.shoot_ready_stage || "Shoot Ready");
+
+  const list = (S.prep || []).filter(r => r.phase === phase).filter(r => {
+    if (S.prepFilter === "left") return !prepDone(r);
+    if (S.prepFilter === "flagged") return !!(r.answer && r.answer.note);
+    return true;
+  });
+
+  const sections = [];
+  list.forEach(r => {
+    const s = r.section || "Items";
+    let g = sections.find(x => x.name === s);
+    if (!g) { g = { name: s, rows: [] }; sections.push(g); }
+    g.rows.push(r);
+  });
+
+  const phaseTab = (p, cnt) => {
+    const all = (S.prep || []).filter(r => r.phase === p);
+    const lo = all.length ? all[0].sno : 0, hi = all.length ? all[all.length - 1].sno : 0;
+    const pct = cnt.total ? Math.round(cnt.done / cnt.total * 100) : 0;
+    return `<button class="ph ${phase === p ? "on" : ""}" onclick="A.prepPhase(${p})">
+      <div class="pl">Items ${lo}–${hi}</div>
+      <div class="ps">to ${esc(p === 1 ? (S.settings.preprod_complete_stage || "Pre-Prod Complete")
+        : (S.settings.shoot_ready_stage || "Shoot Ready"))} · ${cnt.done} of ${cnt.total}</div>
+      <div class="pb"><div class="pf ${cnt.done === cnt.total && cnt.total ? "ok" : ""}"
+        style="width:${pct}%"></div></div></button>`;
+  };
+
+  const itemHTML = r => {
+    const a = r.answer || {};
+    const st = a.state || "open";
+    const ctl = prepControl(r);
+    return `<div class="pit ${st === "done" ? "done" : ""} ${st === "na" ? "na" : ""} ${
+      a.note ? "flagged" : ""}">
+      <div class="pq">
+        <span class="psn">${r.sno}</span>
+        ${r.control === "check"
+          ? `<button class="pbox ${st === "done" ? "on" : ""}" onclick="A.prepToggle(${r.template_id})">${
+              st === "done" ? "✓" : st === "na" ? "—" : ""}</button>`
+          : `<span class="pbox ${st === "done" ? "on" : ""} ${st === "na" ? "nabox" : ""}">${
+              st === "done" ? "✓" : st === "na" ? "—" : ""}</span>`}
+        <span class="plab">${esc(r.item)}
+          ${r.description ? `<span class="phint">${esc(r.description)}</span>` : ""}</span>
+        ${r.allow_na ? `<button class="pna ${st === "na" ? "on" : ""}"
+          onclick="A.prepNA(${r.template_id})" title="Not applicable">N/A</button>` : ""}
+      </div>
+      ${ctl && st !== "na" ? `<div class="pctl">${ctl}</div>` : ""}
+      ${r.wants_stamp && a.done_at
+        ? `<div class="pstamp">✓ ${esc(when(a.done_at))}${a.actor_id
+            ? " by " + esc(nameOf(a.actor_id)) : ""}</div>` : ""}
+      ${r.wants_note || a.note ? `<div class="pctl">
+        <input class="inp" value="${esc(a.note || "")}" placeholder="Remarks"
+          onchange="A.prepNote(${r.template_id},this.value)"></div>` : ""}
+    </div>`;
+  };
+
+  return `<div class="head"><h1>Pre-production</h1>${locTag()}
+      <span class="tag">${esc(j.shoot_type)}</span></div>
+    <p class="sub"><button class="archlink" onclick="A.prepBack()">← ${esc(j.client_name)}</button>
+      · ${j.shoot_at ? esc(fmtShoot(j.shoot_at)) : "date not set"} · ${esc(j.stage)}</p>
+
+    <div class="phases">${phaseTab(1, c1)}${phaseTab(2, c2)}</div>
+
+    <div class="chips" style="margin:12px 0">
+      ${[["all", "All", here.total], ["left", "Remaining", here.total - here.done],
+         ["flagged", "With remarks", (S.prep || []).filter(r => r.phase === phase && r.answer && r.answer.note).length]]
+        .map(([k, lab, n]) => `<button class="chip ${(S.prepFilter || "all") === k ? "on" : ""}"
+          onclick="A.prepFilter('${k}')">${lab}<span class="n">${n}</span></button>`).join("")}
+    </div>
+
+    ${here.done === here.total && here.total
+      ? `<div class="alert green"><b>All ${here.total} verified.</b>
+          This job can move to ${esc(target)}.</div>`
+      : `<div class="alert amber"><b>${here.total - here.done} still to verify</b>
+          before ${esc(target)}.</div>`}
+
+    ${sections.map(g => {
+      const d = g.rows.filter(prepDone).length;
+      return `<div class="grp">
+        <div class="gh"><h2>${esc(g.name)}</h2>
+          <span class="gc ${d === g.rows.length ? "done" : ""}">${d} / ${g.rows.length}</span></div>
+        <div class="gbody">${g.rows.map(itemHTML).join("")}</div></div>`;
+    }).join("") || `<div class="empty">Nothing here with that filter.</div>`}
+
+    <p class="hint">Every change saves on its own. N/A counts as verified —
+      use it for anything this shoot does not need.</p>`;
 }
 
 /* Who actually sends work our way — the whole reason the referrer's name is

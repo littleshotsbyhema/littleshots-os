@@ -462,6 +462,37 @@ async function loadJobs() {
   S.jobs = j.data || [];
   S.children = c.data || [];
 }
+/* which pre-production list this job uses, if any */
+const prepKindFor = j => {
+  if (!j) return null;
+  const t = (S.typeRows || []).find(x => x.name === j.shoot_type);
+  return (t && t.prep_kind) || null;
+};
+/* the template joined to whatever has been answered for this job */
+async function loadPrep(jobId, kind) {
+  const [t, a] = await Promise.all([
+    sb.from("prep_templates").select("*").eq("kind", kind).eq("active", true).order("sno"),
+    sb.from("job_prep").select("*").eq("job_id", jobId)
+  ]);
+  if (t.error) throw t.error;
+  if (a.error) throw a.error;
+  const byId = {};
+  (a.data || []).forEach(r => { byId[r.template_id] = r; });
+  S.prep = (t.data || []).map(row => ({ ...row, template_id: row.id, answer: byId[row.id] || null }));
+}
+const prepDone = r => r.answer && (r.answer.state === "done" || r.answer.state === "na");
+/* asked of the database, so the count is right whether or not the sheet is open */
+async function prepLeft(jobId, phase) {
+  const { data, error } = await sb.rpc("prep_progress", { p_job: jobId, p_phase: phase });
+  if (error) return 0;
+  const r = Array.isArray(data) ? data[0] : data;
+  return r ? Math.max(0, num(r.total) - num(r.answered)) : 0;
+}
+function prepCounts(phase) {
+  const list = (S.prep || []).filter(r => r.phase === phase);
+  return { total: list.length, done: list.filter(prepDone).length };
+}
+
 async function refresh(msg) {
   try {
     await loadJobs();
@@ -498,6 +529,58 @@ const A = {
   setLoc(l) { S.loc = l; closeDrawer(); render(); },
   archiveTab(t) { S.archiveTab = t; render(); },
   openJob(id) { openJob(id).catch(fail); },
+
+  /* ---- the pre-production sheet ---- */
+  /* Its own screen: 66 items will not fit in a 428px drawer, and whoever is
+     working through it is standing in the studio, not sitting at a desk. */
+  async openPrep(id, phase) {
+    const j = S.jobs.find(x => x.id === id);
+    if (!j) return;
+    const kind = prepKindFor(j);
+    if (!kind) return toast("No pre-production list is set up for a " +
+      j.shoot_type + " shoot", true);
+    S.prepJob = id;
+    S.prepPhase = phase || 1;
+    S.prepFilter = "all";
+    await loadPrep(id, kind);
+    S.view = "prep";
+    render(); window.scrollTo(0, 0);
+  },
+  prepPhase(p) { S.prepPhase = p; S.prepFilter = "all"; render(); },
+  prepFilter(f) { S.prepFilter = f; render(); },
+  prepBack() { S.view = "prod"; render(); openJob(S.prepJob).catch(fail); },
+
+  /* every change saves on its own - nobody is hunting for a Save button
+     with one hand full of light stand */
+  async setPrep(tid, patch) {
+    const row = (S.prep || []).find(r => r.template_id === tid);
+    const next = Object.assign({}, row && row.answer, patch);
+    const { error } = await sb.from("job_prep").upsert({
+      job_id: S.prepJob, template_id: tid,
+      state: next.state || "open",
+      value: next.value ?? null,
+      note: next.note ?? null,
+      actor_id: S.me.id
+    }, { onConflict: "job_id,template_id" });
+    if (error) return fail(error);
+    await loadPrep(S.prepJob, prepKindFor(S.jobs.find(x => x.id === S.prepJob)));
+    render();
+  },
+  prepToggle(tid) {
+    const r = (S.prep || []).find(x => x.template_id === tid);
+    const now = (r && r.answer && r.answer.state) || "open";
+    A.setPrep(tid, { state: now === "done" ? "open" : "done" });
+  },
+  prepNA(tid) {
+    const r = (S.prep || []).find(x => x.template_id === tid);
+    const now = (r && r.answer && r.answer.state) || "open";
+    A.setPrep(tid, { state: now === "na" ? "open" : "na" });
+  },
+  prepValue(tid, v) {
+    const s = String(v || "").trim();
+    A.setPrep(tid, { value: s || null, state: s ? "done" : "open" });
+  },
+  prepNote(tid, v) { A.setPrep(tid, { note: String(v || "").trim() || null }); },
   closeModal() { $("modalHost").innerHTML = ""; },
   async signOut() { await sb.auth.signOut(); S.session = null; S.me = null; renderLogin(); },
 
@@ -776,6 +859,17 @@ const A = {
     /* and a warm lead going away is worth a reason */
     if (to === parkedStage() && ["Hot Leads", "Payment Link Shared"].includes(j.stage)
         && !j.archive_reason) return A.archiveLead(id);
+    /* Pre-production gates both of its phases. Open the sheet rather than just
+       refusing - the next thing they need is the list, not an error. */
+    const prepPhase = to === (S.settings.preprod_complete_stage || "Pre-Prod Complete") ? 1
+                    : to === (S.settings.shoot_ready_stage || "Shoot Ready") ? 2 : 0;
+    if (prepPhase && prepKindFor(j)) {
+      const left = await prepLeft(id, prepPhase);
+      if (left > 0) {
+        toast(left + " item" + (left === 1 ? "" : "s") + " still to verify before " + to, true);
+        return A.openPrep(id, prepPhase);
+      }
+    }
     /* the address first — the package is no use if the terms have nowhere to go */
     if (emailNeeded(j, to)) return A.editContact(id, to);
     if (packageNeeded(j, to)) return A.editPackage(id, to);
