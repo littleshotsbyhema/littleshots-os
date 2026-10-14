@@ -1398,11 +1398,20 @@ const A = {
   /* approved off-system — record it, do not email, and let the move through */
   async approveEditsByHand(id, thenStage) {
     A.closeModal();
-    const f = { edits_approved_at: new Date().toISOString(), pending_approval: null };
+    const f = { edits_approved_at: new Date().toISOString(), pending_approval: null,
+                edit_corrections: null };
     if (thenStage) f.stage = thenStage;
     await patch(id, f, "Approval recorded" + (thenStage ? " · moved to " + thenStage : ""));
     await sb.from("job_activity").insert({ job_id: id,
       action: "edited photos approved by the client, recorded by hand", actor_id: S.me.id });
+    /* an approval over the phone is still an approval — it starts the printing
+       work the same way their yes on the link would have */
+    const j = S.jobs.find(x => x.id === id);
+    if (j && (j.has_album || j.frame_included) && !childrenOf(id)
+        .some(c => c.kind === "album" || c.kind === "frame")) {
+      const { data } = await sb.rpc("start_physical_work", { p_job: id });
+      if (data) await refresh("Started the " + data);
+    }
   },
 
   /* the album the client is being asked to sign off has to be visible first */

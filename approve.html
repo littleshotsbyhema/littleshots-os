@@ -125,8 +125,11 @@ function paintEdits(d) {
       <li>Open the link and look through your edited photos.</li>
       <li>Download anything you'd like to keep.</li>
       ${picks.length ? `<li>Tell us which photo you'd like printed.</li>` : ""}
-      <li>Let us know you're happy with them.</li>
+      <li>Tell us you're happy, or what you'd like changed.</li>
     </ol>
+
+    ${Number(d.revision) > 0 ? `<div class="note amber">These are the photos
+      back from your corrections. Have another look and let us know.</div>` : ""}
 
     ${picks.length ? `<div class="card">
       ${picks.join("")}
@@ -136,9 +139,21 @@ function paintEdits(d) {
 
     <div class="card">
       <button class="btn p big" id="yes" onclick="decide('approve')">
-        Yes, I'm happy with these</button>
-      <p class="hint">If something doesn't look right, just reply to the studio's
-        email and we'll sort it out.</p>
+        Yes, I'm happy with these${d.needs_print
+          ? " — start my " + (d.needs_cover && d.needs_frame ? "album and frame"
+            : d.needs_cover ? "album" : "frame") : ""}</button>
+      <button class="btn big" id="no" onclick="openFix()">No, something needs changing</button>
+      <div id="fix" style="display:none;margin-top:6px">
+        <label class="f" for="notes">What would you like changed?</label>
+        <textarea id="notes" placeholder="IMG_1234 — could the background be a little softer?&#10;IMG_1288 — please remove the chair on the left"></textarea>
+        <p class="hint">Photo file names help a lot — they're written under each photo
+          in the gallery.</p>
+        <button class="btn p" id="sendFix" style="margin-top:11px"
+          onclick="decide('reject')">Send these corrections</button>
+      </div>
+      <p class="hint">${d.needs_print
+        ? "Nothing goes to print until you're happy."
+        : "Take your time — nothing is final until you tell us."}</p>
       <div id="msg"></div>
     </div>
     <p class="foot">Little Shots by Hema</p>`;
@@ -190,17 +205,20 @@ async function decide(decision) {
   if (decision === "reject" && !notes) {
     return bad("Please tell us what needs correcting.");
   }
-  /* these get printed, so do not let them past empty */
+  /* these get printed, so do not let them past empty — but only when they are
+     happy. Someone sending corrections has not chosen a print photo yet. */
   const coverEl = $("cover"), frameEl = $("frame");
   const cover = coverEl ? coverEl.value.trim() : null;
   const frame = frameEl ? frameEl.value.trim() : null;
-  if (coverEl && !cover) {
-    coverEl.focus();
-    return bad("Please tell us which photo you'd like on your album cover.");
-  }
-  if (frameEl && !frame) {
-    frameEl.focus();
-    return bad("Please tell us which photo you'd like in your frame.");
+  if (decision === "approve") {
+    if (coverEl && !cover) {
+      coverEl.focus();
+      return bad("Please tell us which photo you'd like on your album cover.");
+    }
+    if (frameEl && !frame) {
+      frameEl.focus();
+      return bad("Please tell us which photo you'd like in your frame.");
+    }
   }
   const b = decision === "reject" ? $("sendFix") : $("yes");
   const was = b.textContent;
@@ -213,8 +231,14 @@ async function decide(decision) {
   }
 
   if (r.kind === "edits") {
+    if (r.decision === "reject") {
+      return stop("Thank you — we're on it",
+        "Your notes are with the editing team. We'll send the photos back to you " +
+        "for another look once they're done.", "green");
+    }
     return stop("Thank you", "We're glad you like them. Your photos are all yours now — " +
-      "do share them with us if you post any.", "green");
+      (r.started ? "we've started your " + esc(r.started) + " as well. " : "") +
+      "Do share them with us if you post any.", "green");
   }
   if (r.decision === "approve") {
     return stop("Thank you — off to print",

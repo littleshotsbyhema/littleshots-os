@@ -984,7 +984,17 @@ function approvalSection(j) {
   if (archived(j)) return "";
   const asked = j.pending_approval, fixes = String(j.album_corrections || "").trim();
   const rev = num(j.album_revision);
+  const edFixes = String(j.edit_corrections || "").trim(), edRev = num(j.edit_revision);
   const rows = [];
+
+  /* the client sent the photos back - this is work, and it leads the panel */
+  if (edFixes) {
+    rows.push(`<div class="slot missing"><h6>Photo corrections asked for</h6>
+      <p>${edRev > 1 ? "Round " + edRev + ". " : ""}The job went back to
+        ${esc(S.settings.editing_stage || "Photo Editing")} with these notes:</p>
+      <textarea readonly style="min-height:78px;margin-top:7px"
+        onclick="this.select()">${esc(edFixes)}</textarea></div>`);
+  }
 
   /* what goes to the printer, in their own words */
   const prints = [
@@ -996,7 +1006,8 @@ function approvalSection(j) {
 
   if (j.edits_approved_at) {
     rows.push(`<div class="slot set"><h6>✓ Edited photos approved</h6>
-      <p>The client signed them off ${when(j.edits_approved_at)}.
+      <p>The client signed them off ${when(j.edits_approved_at)}${edRev
+        ? " after " + edRev + " round" + (edRev === 1 ? "" : "s") + " of corrections" : ""}.
         ${prints.length ? "<br>" + prints.join("<br>") : ""}</p></div>`);
   } else if (asked === "edits") {
     const wants = [j.has_album ? "the album cover" : "", j.frame_included ? "the frame" : ""]
@@ -1004,7 +1015,11 @@ function approvalSection(j) {
     rows.push(`<div class="slot"><h6>Waiting on the client</h6>
       <p>They have been asked to approve the edited photos${wants
         ? " and pick the photo for " + wants : ""}. It lands here the moment
-        they answer.</p></div>`);
+        they answer — a yes starts ${j.has_album || j.frame_included
+          ? "the " + [j.has_album ? "album" : "", j.frame_included ? "frame" : ""]
+            .filter(Boolean).join(" and ") + " by itself"
+          : "nothing else off"}, and corrections send it
+        back to ${esc(S.settings.editing_stage || "Photo Editing")}.</p></div>`);
   } else if (prints.length) {
     rows.push(`<div class="slot set"><h6>Chosen for print</h6>
       <p>${prints.join("<br>")}</p></div>`);
