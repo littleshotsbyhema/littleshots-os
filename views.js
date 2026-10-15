@@ -289,7 +289,7 @@ function boardSub(k) {
     crm: "Every enquiry from first message to signed booking.",
     prod: "Booked jobs through the shoot to the client's gallery.",
     post: "Client selection, editing and quality control — with the video moving in parallel.",
-    print: "Everything that gets printed — albums through design and the press, and frames.",
+    print: "Jobs the client has signed off, with their album and frame being made.",
     del: "The client collecting their order, and the job being closed off."
   }[k] || "";
 }
@@ -1061,8 +1061,8 @@ function tracksSection(j) {
     ${due ? `<div class="trackrow">
       <div class="tr1"><b>${j.has_album ? "Album" : ""}${j.has_album && j.frame_included ? " and frame" : ""}${!j.has_album ? "Frame" : ""}</b>
         <span class="pill amber">not started</span></div>
-      <p class="hint" style="margin-top:4px">The client has the digital files. Start the physical
-        work once they have approved.</p>
+      <p class="hint" style="margin-top:4px">Their approval normally starts this by itself.
+        Nothing has been started here yet.</p>
       <div class="acts" style="margin-top:8px">
         <button class="btn p sm" onclick="A.startPhysical(${j.id})">Client approved — start it</button>
       </div></div>` : ""}

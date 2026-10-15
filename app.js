@@ -47,7 +47,7 @@ const ROWS = {
   crm:  [{ main: true }],
   prod: [{ main: true }],
   post: [{ main: true }, { kind: "video" }],
-  print: [{ kind: "album" }, { kind: "frame" }],
+  print: [{ main: true }, { kind: "album" }, { kind: "frame" }],
   del:  [{ main: true }]
 };
 
@@ -414,7 +414,7 @@ function childBlocking2(job, toStage) {
 }
 /* nothing physical has been started yet, but the package calls for it */
 const physicalDue = job =>
-  job.stage === (S.settings.digital_stage || "Waiting for Client Approval") &&
+  job.stage_no >= ordOf("digital_stage") && job.stage_no < ordOf("pickup_stage") &&
   (job.has_album || job.frame_included) &&
   !childrenOf(job.id).some(c => c.kind === "album" || c.kind === "frame");
 /* money owed, and this move would take the job past the point where that matters */
@@ -1418,13 +1418,14 @@ const A = {
     await sb.from("job_activity").insert({ job_id: id,
       action: "edited photos approved by the client, recorded by hand", actor_id: S.me.id });
     /* an approval over the phone is still an approval — it starts the printing
-       work the same way their yes on the link would have */
+       work, and moves the job on, exactly as their yes on the link would have */
     const j = S.jobs.find(x => x.id === id);
     if (j && (j.has_album || j.frame_included) && !childrenOf(id)
         .some(c => c.kind === "album" || c.kind === "frame")) {
-      const { data } = await sb.rpc("start_physical_work", { p_job: id });
-      if (data) await refresh("Started the " + data);
+      await sb.rpc("start_physical_work", { p_job: id });
     }
+    const { data: moved } = await sb.rpc("advance_after_edit_approval", { p_job: id });
+    await refresh(moved && moved !== j.stage ? "Approved · moved to " + moved : null);
   },
 
   /* the album the client is being asked to sign off has to be visible first */
