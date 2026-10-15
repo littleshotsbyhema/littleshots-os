@@ -19,9 +19,9 @@ const S = {
 };
 
 const MODLABEL = { crm: "Sales", prod: "Production", post: "Post Production",
-                   del: "Delivery", life: "Marketing" };
-const ALLMODS = ["crm", "prod", "post", "del", "life"];
-const BOARDS = ["crm", "prod", "post", "del"];
+                   print: "Print Production", del: "Delivery", life: "Marketing" };
+const ALLMODS = ["crm", "prod", "post", "print", "del", "life"];
+const BOARDS = ["crm", "prod", "post", "print", "del"];
 const LOCATIONS = ["Coimbatore", "Bangalore - MDP", "Bangalore - JP Nagar", "Erode", "Others"];
 const SOURCES = ["Instagram", "Website form", "Google search", "Referral", "Repeat client", "Walk-in", "Other"];
 const ALBUM_SIZES = ["9 x 11", "10 x 10", "12 x 12"];
@@ -36,9 +36,9 @@ const needsProof = m => m !== "Cash";
 const KINDS = [
   { key: "video", label: "Video", mark: "\u25b6", module: "post",
     applies: j => !!j.has_video },
-  { key: "album", label: "Album", mark: "\u25a3", module: "del",
+  { key: "album", label: "Album", mark: "\u25a3", module: "print",
     applies: j => !!j.has_album },
-  { key: "frame", label: "Frame", mark: "\u25a2", module: "del",
+  { key: "frame", label: "Frame", mark: "\u25a2", module: "print",
     applies: j => !!j.frame_included }
 ];
 const kindDef = k => KINDS.find(x => x.key === k);
@@ -47,7 +47,8 @@ const ROWS = {
   crm:  [{ main: true }],
   prod: [{ main: true }],
   post: [{ main: true }, { kind: "video" }],
-  del:  [{ kind: "album" }, { kind: "frame" }, { main: true }]
+  print: [{ kind: "album" }, { kind: "frame" }],
+  del:  [{ main: true }]
 };
 
 /* ------------------------------------------------------------ utils */
@@ -237,11 +238,23 @@ const doneJobs = () => S.jobs.filter(j => inLoc(j) && !!j.archived_at);
 const archivedChildren = () => S.children.filter(c => c.state === "archived" && c.kind === "video");
 const inMod = (j, k) => (j.stage_modules || []).includes(k);
 const modLabel = j => (j.stage_modules || []).map(m => MODLABEL[m]).join(" + ") || "this module";
-const breaches = k => pool().filter(j => j.sla_status === "OVERDUE" && (!k || inMod(j, k)));
-const dueToday = k => pool().filter(j => j.sla_status === "Due today" && (!k || inMod(j, k)));
-const owing = k => pool().filter(j => owes(j) && (!k || inMod(j, k)));
+/* Print Production has no main-line stage of its own — its work is all albums
+   and frames, so its counts come off the children rather than the jobs. */
+const childrenInMod = k => (S.children || []).filter(c => c.state === "active" &&
+  (!k || (c.stage_modules || []).includes(k)));
+const modCount = k => pool().filter(j => inMod(j, k)).length + childrenInMod(k).length;
+const breaches = k => pool().filter(j => j.sla_status === "OVERDUE" && (!k || inMod(j, k)))
+  .concat(childrenInMod(k).filter(c => c.sla_status === "OVERDUE"));
+const dueToday = k => pool().filter(j => j.sla_status === "Due today" && (!k || inMod(j, k)))
+  .concat(childrenInMod(k).filter(c => c.sla_status === "Due today"));
+/* money follows the job, and a job with an album on the press belongs to that
+   board too even though its own stage sits elsewhere */
+const onBoard = (j, k) => !k || inMod(j, k) ||
+  (S.children || []).some(c => c.job_id === j.id && c.state === "active" &&
+    (c.stage_modules || []).includes(k));
+const owing = k => pool().filter(j => owes(j) && onBoard(j, k));
 const owedTotal = k => owing(k).reduce((a, j) => a + bal(j), 0);
-const lockedList = k => pool().filter(j => locked(j) && (!k || inMod(j, k)));
+const lockedList = k => pool().filter(j => locked(j) && onBoard(j, k));
 const upcoming = days => pool().filter(j => j.shoot_at &&
   j.days_to_shoot >= -1 && j.days_to_shoot < days)
   .sort((a, b) => new Date(a.shoot_at) - new Date(b.shoot_at));
@@ -401,7 +414,7 @@ function childBlocking2(job, toStage) {
 }
 /* nothing physical has been started yet, but the package calls for it */
 const physicalDue = job =>
-  job.stage === (S.settings.digital_stage || "Digital Files Delivery") &&
+  job.stage === (S.settings.digital_stage || "Waiting for Client Approval") &&
   (job.has_album || job.frame_included) &&
   !childrenOf(job.id).some(c => c.kind === "album" || c.kind === "frame");
 /* money owed, and this move would take the job past the point where that matters */

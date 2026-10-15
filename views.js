@@ -80,7 +80,7 @@ function tabs() {
   }
   BOARDS.filter(canSee).forEach(k => {
     const late = breaches(k).length;
-    h += tab(k, MODLABEL[k], late ? late + " late" : pool().filter(j => inMod(j, k)).length, late);
+    h += tab(k, MODLABEL[k], late ? late + " late" : modCount(k), late);
   });
   if (canSee("pay")) h += tab("pay", "Payments", owing().length || "", owing().length);
   if (canSee("life")) h += tab("life", "Marketing");
@@ -173,7 +173,7 @@ function boardView(k) {
   const ow = owing(k), lk = lockedList(k);
   const money = ow.length ? `<div class="alert red">
       <b>${rupee(owedTotal(k))} pending across ${ow.length} job${ow.length === 1 ? "" : "s"}.</b>
-      ${k === "del" || k === "post" ? "Editing team: nothing is handed over until this clears." : "Collect before files leave the studio."}
+      ${k === "del" || k === "post" || k === "print" ? "Nothing is handed over or printed until this clears." : "Collect before files leave the studio."}
       <button class="btn sm" onclick="A.go('pay')">See list</button></div>` : "";
   const lock = lk.length ? `<div class="alert dark">
       <b>⤓ ${lk.length} client link${lk.length === 1 ? "" : "s"} must stay view-only.</b>
@@ -183,7 +183,7 @@ function boardView(k) {
     ? `<div class="alert amber"><b>${late} past SLA.</b> Longest waits are at the top of each column.</div>`
     : `<div class="alert green"><b>Everything inside SLA.</b> ${due ? due + " due today." : "Nothing due today."}</div>`;
   return `<div class="head"><h1>${MODLABEL[k]}</h1>${locTag()}
-      <span class="tag">${pool().filter(j => inMod(j, k)).length} active</span>
+      <span class="tag">${modCount(k)} active</span>
       ${late ? `<span class="tag amber">${late} past SLA</span>` : ""}
       ${ow.length ? `<span class="tag red">${rupee(owedTotal(k))} pending</span>` : ""}
       ${k === "crm" && canSee("archive") ? `<button class="archlink" onclick="A.go('archive')">
@@ -215,7 +215,7 @@ function modeSwitch(k) {
    that is what it is judged on; the other boards get the shoot and the wait. */
 function listHTML(k) {
   const sales = k === "crm";
-  const rows = pool().filter(j => inMod(j, k));
+  const rows = pool().filter(j => onBoard(j, k));
   const key = S.sortKey || (sales ? "followup" : "days");
   const dir = S.sortDir === "desc" ? -1 : 1;
   const val = (j, kk) => ({
@@ -289,7 +289,8 @@ function boardSub(k) {
     crm: "Every enquiry from first message to signed booking.",
     prod: "Booked jobs through the shoot to the client's gallery.",
     post: "Client selection, editing and quality control — with the video moving in parallel.",
-    del: "Album, frame, pickup and handover."
+    print: "Everything that gets printed — albums through design and the press, and frames.",
+    del: "The client collecting their order, and the job being closed off."
   }[k] || "";
 }
 function colHTML(k, st) {
@@ -319,9 +320,10 @@ function childRowHTML(kind) {
 function childRowNote(kind) {
   if (kind === "video") return "starts at " + (S.settings.selection_stage || "Waiting for Client Selection") +
     " and finishes on its own — the photos never wait for it";
-  if (kind === "album") return "starts when the client approves the digital files; " +
+  if (kind === "album") return "starts the moment the client approves their photos; " +
     (S.settings.pickup_stage || "Waiting for Client Pickup") + " waits for it";
-  return "starts with the album; it ends at " + (S.settings.frame_done_stage || "Frame Completed");
+  return "starts with the album, on the same approval; it ends at " +
+    (S.settings.frame_done_stage || "Frame Completed");
 }
 function childColHTML(kind, st) {
   const list = liveChildren(kind).filter(c => c.stage === st.name)
