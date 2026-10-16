@@ -83,6 +83,14 @@ function tabs() {
     h += tab(k, MODLABEL[k], late ? late + " late" : modCount(k), late);
   });
   if (canSee("pay")) h += tab("pay", "Payments", owing().length || "", owing().length);
+  if (canSee("social")) {
+    const n = toPost().length;
+    h += tab("social", "Post to Social", n || "", false);
+  }
+  if (canSee("files")) {
+    const due = dueToDelete().length;
+    h += tab("files", "Remove Files", due || deleteList().length || "", due);
+  }
   if (canSee("life")) h += tab("life", "Marketing");
   if (canSee("sla")) h += tab("sla", "Settings");
   if (canSee("team")) h += tab("team", "Team");
@@ -98,12 +106,102 @@ function viewHTML() {
     case "sla": return slaView();
     case "team": return teamView();
     case "archive": return archiveView();
+    case "files": return filesView();
+    case "social": return socialView();
     case "noaccess": return `<div class="head"><h1>No access yet</h1></div>
       <p class="sub">No pipelines have been assigned to you. An admin can fix that in Team.</p>`;
     default: return boardView(S.view);
   }
 }
 const locTag = () => S.loc === "All" ? "" : `<span class="tag grey">${esc(S.loc)}</span>`;
+
+/* ------------------------------------------------ post to social */
+/* One row per piece of material, not per job. Ticking it posted is what
+   takes it off the list, so what is left is always what still owes a post. */
+function socialView() {
+  const rows = toPost();
+  const byKind = k => rows.filter(r => r.kind.key === k).length;
+  const line = r => {
+    const j = r.job, k = r.kind, link = k.link(j);
+    return `<tr>
+      <td><b>${esc(j.client_name)}</b><br>
+        <span style="color:var(--ink-soft);font-size:12px">${esc(j.shoot_type)}${
+          j.shoot_at ? " · " + when(j.shoot_at) : ""}</span></td>
+      <td><span class="pill blue">${esc(k.label)}</span></td>
+      <td style="font-size:12.5px">${link
+        ? `<a href="${esc(link)}" target="_blank" rel="noreferrer noopener"
+             style="color:var(--rose);font-weight:600;word-break:break-all">${esc(link)}</a>`
+        : `<span style="color:var(--ink-soft)">no link on file</span>`}</td>
+      <td style="white-space:nowrap">
+        <button class="btn p sm" onclick="A.markPosted(${j.id},'${k.key}')">Mark posted</button>
+        <button class="btn sm" onclick="A.openJob(${j.id})">Open job</button></td></tr>`;
+  };
+  return `<div class="head"><h1>Post to Social</h1>${locTag()}
+      <span class="tag">${rows.length} waiting</span>
+      ${["bts", "video", "photos"].map(k => byKind(k)
+        ? `<span class="tag grey">${byKind(k)} ${esc(postKind(k).label.toLowerCase())}</span>` : "").join("")}</div>
+    <p class="sub">Everything the studio has that is worth putting out and has not gone up yet.
+      BTS appears as soon as the photographer hands over a backup link; video and photos
+      appear when QC says they are worth it.</p>
+    ${rows.length ? `<div class="panel"><table>
+      <thead><tr><th>Client</th><th>What</th><th>Files</th><th></th></tr></thead>
+      <tbody>${rows.map(line).join("")}</tbody></table></div>`
+      : `<div class="empty">Nothing waiting to be posted</div>`}
+    <p class="hint">Marking a row posted only takes it off this list — it does not post
+      anything. A job can sit here three times, once for each kind.</p>`;
+}
+
+/* --------------------------------------- remove files from backup */
+/* Every job whose clock is running, soonest first. A row leaves this list the
+   moment someone marks the files gone, which is the whole point of it. */
+function filesView() {
+  const rows = deleteList(), due = dueToDelete();
+  const days = RETENTION_DAYS();
+  const line = j => {
+    const left = num(j.days_to_delete);
+    const ok = !!j.backup_confirmed_at;
+    const state = ok
+      ? `<span class="pill green">backup confirmed</span>`
+      : left > 0 ? `<span class="pill">waiting on client</span>`
+      : `<span class="pill amber">never confirmed</span>`;
+    const clock = left > 0
+      ? `${left} day${left === 1 ? "" : "s"} left`
+      : `<b style="color:var(--red)">due now</b>`;
+    const links = [
+      j.gallery_link ? `<a href="${esc(j.gallery_link)}" target="_blank" rel="noopener">unedited</a>` : "",
+      j.edited_link ? `<a href="${esc(j.edited_link)}" target="_blank" rel="noopener">edited</a>` : "",
+      j.has_video && j.video_link ? `<a href="${esc(j.video_link)}" target="_blank" rel="noopener">video</a>` : ""
+    ].filter(Boolean).join(" · ") || `<span style="color:var(--ink-soft)">no links on file</span>`;
+    return `<tr>
+      <td><b>${esc(j.client_name)}</b><br>
+        <span style="color:var(--ink-soft);font-size:12px">${esc(j.shoot_type)}</span></td>
+      <td style="font-size:12.5px">${links}</td>
+      <td>${state}${j.backup_confirmed_at
+        ? `<br><span style="color:var(--ink-soft);font-size:12px">${when(j.backup_confirmed_at)}</span>` : ""}</td>
+      <td>${clock}<br><span style="color:var(--ink-soft);font-size:12px">${
+        j.delete_due_on ? esc(j.delete_due_on) : ""}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn p sm" onclick="A.markDeleted(${j.id})">Mark deleted</button>
+        ${j.backup_confirmed_at ? "" :
+          `<button class="btn sm" onclick="A.copyBackupLink(${j.id})">Remind</button>`}</td></tr>`;
+  };
+  return `<div class="head"><h1>Remove Files from Backup</h1>${locTag()}
+      <span class="tag">${rows.length} waiting</span>
+      ${due.length ? `<span class="tag red">${due.length} due now</span>` : ""}</div>
+    <p class="sub">The studio keeps every shoot for ${days} days after the client is told
+      their order is ready. This is what is still on the drives.</p>
+    ${due.length ? `<div class="alert red"><b>${due.length} ${due.length === 1
+        ? "shoot is" : "shoots are"} ready to come off the drives.</b>
+        Either their ${days} days are up, or they have told us their own backup is taken.</div>`
+      : `<div class="alert green"><b>Nothing is due yet.</b> ${rows.length
+        ? "The soonest has " + num(rows[0].days_to_delete) + " days to go." : ""}</div>`}
+    ${rows.length ? `<div class="panel"><table>
+      <thead><tr><th>Client</th><th>Files</th><th>Backup</th><th>Delete by</th><th></th></tr></thead>
+      <tbody>${rows.map(line).join("")}</tbody></table></div>`
+      : `<div class="empty">Nothing is waiting to be deleted</div>`}
+    <p class="hint">Marking a row deleted only records that you have cleared the drive —
+      it takes the row off this list and cannot be undone here.</p>`;
+}
 
 /* ------------------------------------------------------- dashboard */
 function dashView() {
@@ -1554,6 +1652,21 @@ function slaView() {
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
       <textarea style="min-height:170px" onchange="A.setSetting('selection_body',this.value)">${esc(S.settings.selection_body || "")}</textarea>
       <p class="hint">Goes out from the same studio Gmail, with no attachments.</p></div>
+    <div class="panel"><h3>Keeping files</h3>
+      <p class="ph">How long a shoot stays on the studio's drives after the client is
+        first told their order is ready. Both emails say this and carry the link the
+        client uses to confirm their own backup.</p>
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Days kept</label>
+      <input class="inp" type="number" min="1" style="max-width:120px"
+        value="${esc(S.settings.retention_days || "90")}"
+        onchange="A.setSetting('retention_days',this.value)">
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">
+        Where the app lives</label>
+      <input class="inp" value="${esc(S.settings.app_origin || "")}"
+        placeholder="https://littleshots-os.vercel.app"
+        onchange="A.setSetting('app_origin',this.value)">
+      <p class="hint">The confirm link in the emails is built from this, so it has to be
+        the address clients can actually reach.</p></div>
     <div class="panel"><h3>Collected thank-you email</h3>
       <p class="ph">Offered on the last move, into ${esc(S.settings.delivered_stage || "Delivered")}.
         {{client_name}}, {{shoot_type}} and {{items_collected}} are filled in —

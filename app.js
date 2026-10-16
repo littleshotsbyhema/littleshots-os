@@ -114,7 +114,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting|Name the Production Head|Record what was discussed)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting|Name the Production Head|Record what was discussed|Say whether these photos|Say whether this video)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -155,10 +155,50 @@ function canSee(v) {
   if (ALLMODS.includes(v)) return myMods().includes(v);
   if (v === "crm-chase") return myMods().includes("crm");
   if (v === "pay" || v === "archive") return myMods().some(m => m !== "life");
+  /* whoever looks after delivery is who clears the drives */
+  if (v === "files") return myMods().some(m => m === "del" || m === "print");
+  /* posting is marketing's job, but post-production picks what is worth it */
+  if (v === "social") return myMods().some(m => m === "life" || m === "post");
   if (v === "dash" || v === "sla" || v === "team") return false;
   return true;
 }
-const firstAllowed = () => ["dash", ...BOARDS, "life", "pay"].find(canSee) || "noaccess";
+const firstAllowed = () => ["dash", ...BOARDS, "life", "social", "pay", "files"].find(canSee) || "noaccess";
+
+/* ---- what the studio still owes its own feed ---- */
+/* Three kinds of material come off one shoot. Each is listed on its own and
+   ticked off on its own, so a job can be half-posted. */
+const POST_KINDS = [
+  { key: "bts", label: "BTS", stamp: "posted_bts_at",
+    link: j => j.bts_backup_link,
+    /* whatever the photographer handed over on the day is fair game */
+    wanted: j => !!String(j.bts_backup_link || "").trim() },
+  { key: "video", label: "Video", stamp: "posted_video_at",
+    link: j => j.video_link,
+    wanted: j => j.post_video === true },
+  { key: "photos", label: "Photos", stamp: "posted_photos_at",
+    link: j => j.edited_link,
+    wanted: j => j.post_photos === true }
+];
+const postKind = k => POST_KINDS.find(x => x.key === k);
+const toPost = () => {
+  const out = [];
+  S.jobs.filter(j => inLoc(j) && !archived(j)).forEach(j =>
+    POST_KINDS.forEach(k => {
+      if (k.wanted(j) && !j[k.stamp]) out.push({ job: j, kind: k });
+    }));
+  return out.sort((a, b) =>
+    String(a.job.shoot_at || "").localeCompare(String(b.job.shoot_at || "")) ||
+    String(a.job.client_name || "").localeCompare(String(b.job.client_name || "")));
+};
+
+/* ---- files waiting to come off the studio's drives ---- */
+const RETENTION_DAYS = () => num(S.settings.retention_days) || 90;
+/* the clock starts when the client is first told their order is ready */
+const onDeathRow = j => !!j.retention_started_at && !j.files_deleted_at;
+const deleteList = () => S.jobs.filter(j => inLoc(j) && onDeathRow(j))
+  .sort((a, b) => num(a.days_to_delete) - num(b.days_to_delete) ||
+    String(a.client_name || "").localeCompare(String(b.client_name || "")));
+const dueToDelete = () => deleteList().filter(j => num(j.days_to_delete) <= 0);
 
 /* optional stages: the job only passes through if the package calls for it */
 function appliesTo(job, st) {
@@ -961,6 +1001,9 @@ const A = {
     if (shootQcNeeded(j, to)) return A.shootQc(id, to);
     if (selectionNeeded(j, to)) return A.setSelection(id, to);
     if (editInfoNeeded(j, to)) return A.setEdit(id, to);
+    /* QC is where someone last looked at the work, so it is where we ask */
+    if (crossing(j, to, "digital_stage") && j.post_photos == null)
+      return A.askPost(id, "photos", to);
     if (editsApprovalNeeded(j, to)) return A.mailEditApproval(id, to);
     /* the physical work hands the job over itself, and closes itself off.
        The database checks it is finished and says so if it is not. */
@@ -1590,6 +1633,99 @@ const A = {
     await refresh("Thank-you sent to " + data.to);
   },
 
+  /* ---- is this worth putting out? ---- */
+  askPost(id, kind, thenStage, childId) {
+    const j = S.jobs.find(x => x.id === id);
+    const what = kind === "video" ? "video" : "edited photos";
+    const link = kind === "video" ? j.video_link : j.edited_link;
+    modal(`<h3>Worth posting?</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}${thenStage
+        ? " — needed before " + esc(thenStage) : ""}</p>
+      <p class="mh" style="margin-top:10px">Is there anything in these ${what} we should
+        put on our own feed? Saying yes adds them to Post to Social — it does not post
+        anything by itself.</p>
+      ${link ? `<p class="hint" style="margin-top:8px"><a href="${esc(link)}"
+        target="_blank" rel="noopener">Open the ${esc(what)} ↗</a></p>` : ""}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.savePost(${id},'${kind}',true,${thenStage
+          ? `'${esc(thenStage)}'` : "null"},${childId || "null"})">Yes, worth posting</button>
+        <button class="btn" onclick="A.savePost(${id},'${kind}',false,${thenStage
+          ? `'${esc(thenStage)}'` : "null"},${childId || "null"})">No, skip it</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+  },
+  async savePost(id, kind, yes, thenStage, childId) {
+    A.closeModal();
+    const f = kind === "video" ? { post_video: yes } : { post_photos: yes };
+    /* the answer has to be on the job before the move is tried, or the
+       database refuses it on the way past */
+    const { error } = await sb.from("jobs").update(f).eq("id", id);
+    if (error) return fail(error);
+    await loadJobs();
+    if (childId && thenStage) return A.moveChild(childId, thenStage);
+    if (thenStage) return A.moveTo(id, thenStage);
+    await refresh(yes ? "Added to Post to Social" : "Marked as not for posting");
+  },
+  markPosted(id, kind) {
+    const k = postKind(kind);
+    if (!k) return;
+    const j = S.jobs.find(x => x.id === id);
+    modal(`<h3>Mark ${esc(k.label.toLowerCase())} as posted</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}</p>
+      <p class="mh" style="margin-top:10px">This takes the row off the list. Only tick it
+        once it is actually up.</p>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.savePosted(${id},'${kind}')">It is posted</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+  },
+  async savePosted(id, kind) {
+    const k = postKind(kind);
+    A.closeModal();
+    await patch(id, { [k.stamp]: new Date().toISOString() }, k.label + " marked as posted");
+    await sb.from("job_activity").insert({ job_id: id,
+      action: k.label.toLowerCase() + " posted to social", actor_id: S.me.id });
+  },
+
+  /* ---- clearing the studio's copy ---- */
+  markDeleted(id) {
+    const j = S.jobs.find(x => x.id === id);
+    if (!j) return;
+    const left = num(j.days_to_delete);
+    modal(`<h3>Remove the files</h3>
+      <p class="mh">${esc(j.client_name)} · ${esc(j.shoot_type)}</p>
+      ${j.backup_confirmed_at
+        ? `<div class="alert green"><b>They have confirmed their own backup.</b>
+             Told us ${when(j.backup_confirmed_at)}.</div>`
+        : left > 0
+        ? `<div class="alert amber"><b>They have not confirmed a backup yet.</b>
+             There ${left === 1 ? "is" : "are"} still ${left} day${left === 1 ? "" : "s"}
+             to go — check with them before clearing anything.</div>`
+        : `<div class="alert amber"><b>Their ${RETENTION_DAYS()} days are up</b>, but they
+             never confirmed a backup. Worth one last message before you clear it.</div>`}
+      <p class="mh" style="margin-top:12px">Tick this once the unedited and edited files
+        are actually off the studio's drives. It is only a record — nothing is deleted
+        for you, and this cannot be undone here.</p>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveDeleted(${id})">I have deleted them</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>`);
+  },
+  async saveDeleted(id) {
+    A.closeModal();
+    await patch(id, { files_deleted_at: new Date().toISOString(), files_deleted_by: S.me.id },
+      "Marked as removed from backup");
+    await sb.from("job_activity").insert({ job_id: id,
+      action: "files removed from the studio backup", actor_id: S.me.id });
+  },
+  copyBackupLink(id) {
+    const j = S.jobs.find(x => x.id === id);
+    const link = location.origin + "/backup.html?t=" + encodeURIComponent(j.retention_token || "");
+    const msg = "Hi " + j.client_name + ", a reminder to download and back up your photographs — " +
+      "we clear our copy after " + RETENTION_DAYS() + " days. Once yours is safely stored, " +
+      "you can let us know here:\n" + link;
+    navigator.clipboard.writeText(msg)
+      .then(() => toast("Reminder copied — paste it into the chat"))
+      .catch(() => toast("Could not copy it", true));
+  },
+
   /* ---- child processes ---- */
   async moveChild(childId, to, override) {
     const c = S.children.find(x => x.id === childId);
@@ -1603,6 +1739,10 @@ const A = {
     const albumAsk = S.settings.album_approval_stage || "Waiting for Client Approval to Print";
     if (c.kind === "album" && target === albumAsk && !String(j.album_proof_link || "").trim())
       return A.setAlbumProof(childId, target);
+    /* leaving Video QC is the last look anyone takes at the cut */
+    if (c.kind === "video" && target === (S.settings.video_delivery_stage || "Video Delivery")
+        && j.post_video == null)
+      return A.askPost(c.job_id, "video", target, childId);
     if (childPayGate(j, target) && !override)
       return toast("Blocked — " + rupee(bal(j)) + " still owed before " + target, true);
     await patchChild(childId, { stage: target },
