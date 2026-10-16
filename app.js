@@ -114,7 +114,7 @@ function toast(msg, isErr) {
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting|Name the Production Head|Record what was discussed)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -317,7 +317,8 @@ const galleryLinkNeeded = (job, to) =>
 const QC_VERDICTS = () => String(S.settings.shoot_qc_verdicts ||
   "Good,Needs attention,Reshoot needed").split(",").map(s => s.trim()).filter(Boolean);
 const shootQcDone = job => !!String(job.shoot_qc_verdict || "").trim() &&
-  !!String(job.shoot_qc_notes || "").trim();
+  !!String(job.shoot_qc_notes || "").trim() && !!job.shoot_qc_head &&
+  !!String(job.shoot_qc_discussion || "").trim();
 const shootQcNeeded = (job, to) =>
   crossing(job, to, "selection_stage") && !shootQcDone(job);
 function editInfoNeeded(job, to) {
@@ -1107,6 +1108,16 @@ const A = {
         ${S.people.filter(p => p.active).map(p => `<option value="${esc(p.id)}"
           ${p.id === (j.shoot_qc_by || (S.me || {}).id) ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}
       </select>
+      <label style="margin-top:10px">Production Head</label>
+      <select class="inp" id="qcHead">
+        <option value="">— pick one —</option>
+        ${S.people.filter(p => p.active).map(p => `<option value="${esc(p.id)}"
+          ${p.id === j.shoot_qc_head ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}
+      </select>
+      <label style="margin-top:10px">Discussed with the photographer</label>
+      <textarea class="inp" id="qcTalk" rows="3"
+        placeholder="What the Production Head took back to them, and what they said"
+        >${esc(j.shoot_qc_discussion || "")}</textarea>
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveShootQc(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and move" : ""}</button>
@@ -1118,10 +1129,15 @@ const A = {
     const verdict = $("qcVerdict").value.trim();
     const notes = $("qcNotes").value.trim();
     const by = $("qcBy").value || null;
+    const head = $("qcHead").value || null;
+    const talk = $("qcTalk").value.trim();
     if (!verdict) return toast("Pick how the shoot came out", true);
     if (!notes) return toast("Write up what the review found", true);
+    if (!head) return toast("Name the Production Head who reviewed it", true);
+    if (!talk) return toast("Record what was discussed with the photographer", true);
     A.closeModal();
-    const f = { shoot_qc_verdict: verdict, shoot_qc_notes: notes, shoot_qc_by: by };
+    const f = { shoot_qc_verdict: verdict, shoot_qc_notes: notes, shoot_qc_by: by,
+                shoot_qc_head: head, shoot_qc_discussion: talk };
     if (thenStage) f.stage = thenStage;
     await patch(id, f, thenStage ? "Shoot reviewed · moved to " + thenStage : "Shoot review saved");
   },
@@ -1665,9 +1681,18 @@ const A = {
         <option value="">— pick one —</option>
         ${SATISFACTION().map(s => `<option ${s === j.client_satisfaction ? "selected" : ""}>${esc(s)}</option>`).join("")}
       </select>
-      <label style="margin-top:10px">Any review given on the day <span class="opt">optional</span></label>
-      <textarea class="inp" id="hoReview" rows="2"
-        placeholder="What they said, or where they posted it">${esc(j.shoot_reviews || "")}</textarea>
+      <label style="margin-top:10px">Did they leave a Google review? <span class="opt">optional</span></label>
+      <div class="seg" id="hoGrSeg">
+        <button type="button" id="hoGrYes" class="${j.google_review === true ? "on" : ""}"
+          onclick="A.hoGoogle(true)">Yes</button>
+        <button type="button" id="hoGrNo" class="${j.google_review === false ? "on" : ""}"
+          onclick="A.hoGoogle(false)">No</button>
+      </div>
+      <div id="hoGrBox" style="margin-top:8px${j.google_review === true ? "" : ";display:none"}">
+        <label>Link to the review <span class="opt">optional</span></label>
+        <input class="inp" id="hoGrLink" value="${esc(j.google_review_link || "")}"
+          placeholder="https://g.page/…">
+      </div>
       <label style="margin-top:10px">Editing notes from the client <span class="opt">optional</span></label>
       <textarea class="inp" id="hoEditFb" rows="2"
         placeholder="Anything they asked for in the edit">${esc(j.edit_feedback || "")}</textarea>
@@ -1735,6 +1760,15 @@ const A = {
     }
   },
 
+  /* yes shows the link box, no hides it — the segment is the source of truth */
+  hoGoogle(yes) {
+    const y = $("hoGrYes"), n = $("hoGrNo"), box = $("hoGrBox");
+    if (!y || !n) return;
+    const already = (yes ? y : n).classList.contains("on");
+    y.classList.toggle("on", !already && yes);
+    n.classList.toggle("on", !already && !yes);
+    if (box) box.style.display = y.classList.contains("on") ? "" : "none";
+  },
   async saveHandover(id, thenStage) {
     const j = S.jobs.find(x => x.id === id);
     const v = k => (($(k) || {}).value || "").trim();
@@ -1752,7 +1786,11 @@ const A = {
     /* Every field is read here, before the modal closes. Reading one of them
        further down - after closeModal has torn the form out of the DOM - is
        how "who booked it" silently went missing once already. */
-    const bts = v("hoBts"), review = v("hoReview"), editFb = v("hoEditFb");
+    const bts = v("hoBts"), editFb = v("hoEditFb");
+    const grEl = $("hoGrYes");
+    const gr = grEl ? (grEl.classList.contains("on") ? true
+                     : ($("hoGrNo").classList.contains("on") ? false : null)) : null;
+    const grLink = gr === true ? v("hoGrLink") : "";
     const problem = v("hoProblem"), follow = v("hoFollow");
     const upFiles = parseInt(v("hoUpFiles") || "0", 10) || null;
     const upAddons = v("hoUpAddons");
@@ -1802,7 +1840,8 @@ const A = {
       video_files: j.has_video && vidFiles ? vidFiles : null,
       video_backup_link: j.has_video ? (vidBackup || null) : null,
       client_satisfaction: sat || null,
-      shoot_reviews: review || null,
+      google_review: gr,
+      google_review_link: gr === true ? (grLink || null) : null,
       edit_feedback: editFb || null,
       shoot_problems: problem || null,
       shoot_followup_on: follow || null,

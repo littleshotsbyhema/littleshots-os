@@ -612,12 +612,16 @@ function handoverSection(j) {
         ${row("BTS", j.bts_backup_link
           ? `<a href="${esc(j.bts_backup_link)}" target="_blank" rel="noopener">backup link</a>` : "")}
         ${row("Client", sat ? `<span class="pill ${happy ? "green" : "amber"}">${esc(sat)}</span>` : "")}
+        ${row("Google review", j.google_review === true
+          ? `<span class="pill green">left one</span>${j.google_review_link
+              ? ` · <a href="${esc(j.google_review_link)}" target="_blank" rel="noopener">read it</a>` : ""}`
+          : j.google_review === false ? `<span class="pill">not yet</span>` : "")}
         ${row("Follow up", j.shoot_followup_on ? esc(j.shoot_followup_on) : "")}
         ${row("Thank-you", j.shootdone_sent_at
           ? '<span class="pill green">sent</span>'
           : (j.email ? '<span class="pill amber">not sent</span>' : "no email on file"))}
       </div>
-      ${note("Review", j.shoot_reviews)}
+      ${note("Review on the day", j.shoot_reviews)}
       ${note("Asked for in the edit", j.edit_feedback)}
       ${note("Problems", j.shoot_problems)}
       ${j.upsold ? `<div class="dnote up"><span>Upsold ${rupee(j.upsell_amount)}</span>
@@ -640,21 +644,26 @@ function shootQcSection(j) {
   if (archived(j) || j.stage_no < qcOrd) return "";
   const verdict = String(j.shoot_qc_verdict || "").trim();
   const notes = String(j.shoot_qc_notes || "").trim();
-  const done = verdict && notes;
+  const done = verdict && notes && j.shoot_qc_head && String(j.shoot_qc_discussion || "").trim();
   const past = j.stage_no >= selOrd;
   const clean = /^good|^pass|^ok/i.test(verdict);
   const box = done
     ? `<div class="slot ${clean ? "set" : ""}">
         <h6><span class="pill ${clean ? "green" : "amber"}">${esc(verdict)}</span></h6>
         <p>Reviewed${j.shoot_qc_by_name ? " by <b>" + esc(j.shoot_qc_by_name) + "</b>" : ""}
-          ${j.shoot_qc_at ? when(j.shoot_qc_at) : ""}.</p>
-        <div class="dnote"><span>What it found</span>${esc(notes)}</div></div>`
+          ${j.shoot_qc_at ? when(j.shoot_qc_at) : ""}${j.shoot_qc_head_name
+            ? ` · Production Head <b>${esc(j.shoot_qc_head_name)}</b>` : ""}.</p>
+        <div class="dnote"><span>What it found</span>${esc(notes)}</div>
+        ${String(j.shoot_qc_discussion || "").trim()
+          ? `<div class="dnote"><span>Discussed with the photographer</span>${
+              esc(String(j.shoot_qc_discussion).trim())}</div>` : ""}</div>`
     : past
     ? `<div class="slot"><h6>Never reviewed</h6>
         <p>This shoot moved on before the review was part of the process.
           You can still record one.</p></div>`
     : `<div class="slot missing"><h6>Not reviewed yet</h6>
-        <p>Someone has to look the shoot over and write up what they found before
+        <p>The shoot has to be looked over, the findings written up, and the
+          Production Head's discussion with the photographer recorded, before
           it moves to ${esc(S.settings.selection_stage || "the next stage")}.</p></div>`;
   return `<div class="sec"><h5>Shoot review</h5>${box}
     <div class="acts" style="margin-top:10px">
