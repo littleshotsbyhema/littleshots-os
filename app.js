@@ -975,6 +975,8 @@ const A = {
       ? "Overridden — delivered with " + rupee(bal(j)) + " owing" : "Moved to " + to);
     if (override) await sb.from("job_activity").insert({
       job_id: id, action: "payment override: delivered with " + rupee(bal(j)) + " owing", actor_id: S.me.id });
+    /* the job is closed off — the only thing left is thanking them for coming in */
+    if (to === (S.settings.delivered_stage || "Delivered") && j.email) await A.mailCollected(id);
   },
   /* ---- money in, with something behind it ---- */
   /* the gap case: money the job already counts, but with no record behind it */
@@ -1557,6 +1559,35 @@ const A = {
     }
     A.closeModal();
     await refresh("Told " + data.to + " their " + data.items + " is ready");
+  },
+
+  /* ---- and thank them once it is in their hands ---- */
+  async mailCollected(id) {
+    const j = S.jobs.find(x => x.id === id);
+    if (j && !j.email) return;
+    const { data, error } = await sb.functions.invoke("send-collected-email",
+      { body: { job_id: id, preview: true } });
+    if (error || (data && data.error)) return fail(error || new Error(data.error));
+    modal(`<h3>Thank them for collecting</h3>
+      <p class="mh">To <b>${esc(data.to)}</b> · ${esc(data.items)}</p>
+      ${emailBox(data)}
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" id="clSend" onclick="A.sendCollected(${id})">Send it</button>
+        <button class="btn" onclick="A.closeModal()">Not now</button></div>
+      <p class="hint">This is the last thing the client hears from us, so it asks for a
+        Google review. Reword it in Prices &amp; settings.</p>`);
+  },
+  async sendCollected(id) {
+    const btn = $("clSend");
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const { data, error } = await sb.functions.invoke("send-collected-email",
+      { body: { job_id: id } });
+    if (error || (data && data.error)) {
+      if (btn) { btn.disabled = false; btn.textContent = "Send it"; }
+      return fail(error || new Error(data.error));
+    }
+    A.closeModal();
+    await refresh("Thank-you sent to " + data.to);
   },
 
   /* ---- child processes ---- */

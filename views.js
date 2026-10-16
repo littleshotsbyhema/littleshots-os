@@ -480,6 +480,7 @@ function jobBody(j, notes, acts) {
     ${moveSection(j, nextS, prevS, gateBlocked, gate, b, parked)}
     ${paySection(j, b, gate)}
     ${accessSection(j, b)}
+    ${closedSection(j)}
     ${detailSection(j)}
     ${activitySection(acts)}
     <details class="journey"><summary>Journey</summary><div>${stepper(j)}</div></details>`;
@@ -1246,6 +1247,22 @@ function paymentsList(j) {
   </div>`;
 }
 
+/* The job is finished. The only thing that can still be owed to the client
+   here is the thank-you, so that is all this shows. */
+function closedSection(j) {
+  if (archived(j) || j.stage !== (S.settings.delivered_stage || "Delivered")) return "";
+  const sent = j.collected_sent_at;
+  return `<div class="sec"><h5>Closed off</h5>
+    <div class="slot ${sent ? "set" : ""}">
+      <h6>${sent ? "\u2713 Thanked for collecting" : "Thank-you not sent"}</h6>
+      <p>${sent ? "Sent " + when(sent) + "."
+        : j.email ? "They have not been thanked for coming in yet."
+        : "No email address on file, so there is nobody to send it to."}</p></div>
+    ${j.email ? `<div class="acts" style="margin-top:10px">
+      <button class="btn ${sent ? "sm" : "p sm"}" onclick="A.mailCollected(${j.id})">
+        ${sent ? "Send again" : "Send the thank-you"}</button></div>` : ""}</div>`;
+}
+
 function accessSection(j, b) {
   const box = locked(j)
     ? `<div class="lockbox off"><h6>⤓ Downloads OFF · view-only link</h6>
@@ -1537,6 +1554,17 @@ function slaView() {
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
       <textarea style="min-height:170px" onchange="A.setSetting('selection_body',this.value)">${esc(S.settings.selection_body || "")}</textarea>
       <p class="hint">Goes out from the same studio Gmail, with no attachments.</p></div>
+    <div class="panel"><h3>Collected thank-you email</h3>
+      <p class="ph">Offered on the last move, into ${esc(S.settings.delivered_stage || "Delivered")}.
+        {{client_name}}, {{shoot_type}} and {{items_collected}} are filled in —
+        {{items_collected}} names the album and frame they actually ordered, and reads
+        "your photographs" for a package with nothing to collect.</p>
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650">Subject</label>
+      <input class="inp" value="${esc(S.settings.collected_subject || "")}" onchange="A.setSetting('collected_subject',this.value)">
+      <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
+      <textarea style="min-height:170px" onchange="A.setSetting('collected_body',this.value)">${esc(S.settings.collected_body || "")}</textarea>
+      <p class="hint">This one asks for a Google review. Take that paragraph out if you
+        would rather ask in person.</p></div>
     <div class="panel"><h3>Shoot thank-you email</h3>
       <p class="ph">Offered the moment a shoot is marked complete. {{client_name}},
         {{shoot_type}}, {{payment_block}}, {{unedited_days}} and {{unedited_by}} are filled in —
