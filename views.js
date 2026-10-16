@@ -1429,7 +1429,9 @@ function detailSection(j) {
       <option value="">Unassigned</option>
       ${teamFor(j.stage).map(p => `<option value="${p.id}" ${p.id === j.owner_id ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}
       </select>
-      <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">only people with access to this pipeline</div></dd>
+      <div style="color:var(--ink-soft);font-size:11px;margin-top:3px">${j.owner_pinned
+        ? "picked by hand — they keep this job through every stage, until you set it back to Unassigned"
+        : "follows the rules in Settings — the next stage will reassign it"}</div></dd>
   </dl></div>`;
 }
 
@@ -1652,6 +1654,39 @@ function slaView() {
       <label style="font-size:11px;color:var(--ink-soft);font-weight:650;margin-top:9px;display:block">Body</label>
       <textarea style="min-height:170px" onchange="A.setSetting('selection_body',this.value)">${esc(S.settings.selection_body || "")}</textarea>
       <p class="hint">Goes out from the same studio Gmail, with no attachments.</p></div>
+    <div class="panel" style="grid-column:1/-1"><h3>Who picks it up</h3>
+      <p class="ph">When a job reaches a stage it is handed to whoever is named here,
+        whoever had it before. A stage left blank changes nothing — the job keeps
+        the person it already had. Tick <b>by location</b> where Bangalore and
+        Coimbatore are handled by different people.</p>
+      <table><thead><tr>
+        <th style="width:38%">Stage</th><th style="width:14%">By location</th><th>Assign to</th>
+      </tr></thead><tbody>
+        ${S.stages.filter(st => !st.is_parked).sort((a, b) => a.ordinal - b.ordinal).map(st => {
+          const split = ruleSplit(st.name);
+          const pick = (grp, label) => `<div style="display:flex;align-items:center;gap:7px;${
+              split ? "margin-bottom:5px" : ""}">
+            ${label ? `<span style="font-size:11.5px;color:var(--ink-soft);min-width:120px">${label}</span>` : ""}
+            <select class="inp" style="max-width:220px"
+              onchange="A.setRule('${esc(st.name)}','${grp}',this.value)">
+              <option value="">— nobody —</option>
+              ${S.people.filter(p => p.active).map(p => `<option value="${esc(p.id)}"
+                ${(ruleFor(st.name, grp) || {}).profile_id === p.id ? "selected" : ""}
+                >${esc(p.full_name)}</option>`).join("")}
+            </select></div>`;
+          return `<tr>
+            <td><b>${esc(st.name)}</b>${st.track
+              ? ` <span class="pill blue">${esc(st.track)}</span>` : ""}</td>
+            <td><label class="chk"><input type="checkbox" ${split ? "checked" : ""}
+              onchange="A.splitRule('${esc(st.name)}',this.checked)"></label></td>
+            <td>${split
+              ? pick("bangalore", "Bangalore") + pick("cbe_erode", "Coimbatore / Erode")
+              : pick("any", "")}</td></tr>`;
+        }).join("")}
+      </tbody></table>
+      <p class="hint">Anywhere that is not Bangalore — Coimbatore, Erode and Others —
+        follows the Coimbatore / Erode row. Assigning somebody by hand on a job overrides
+        all of this: they keep it until the job is set back to Unassigned.</p></div>
     <div class="panel"><h3>Keeping files</h3>
       <p class="ph">How long a shoot stays on the studio's drives after the client is
         first told their order is ready. Both emails say this and carry the link the

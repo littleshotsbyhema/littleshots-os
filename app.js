@@ -164,6 +164,23 @@ function canSee(v) {
 }
 const firstAllowed = () => ["dash", ...BOARDS, "life", "social", "pay", "files"].find(canSee) || "noaccess";
 
+/* ---- who picks a job up when it lands on a stage ---- */
+/* Bangalore is its own world; everywhere else shares a team. The database
+   makes the same split, and this has to agree with it. */
+const LOC_GROUPS = [
+  { key: "any", label: "Everyone" },
+  { key: "bangalore", label: "Bangalore" },
+  { key: "cbe_erode", label: "Coimbatore / Erode" }
+];
+const ruleFor = (stage, grp) =>
+  (S.rules || []).find(r => r.stage === stage && r.loc_group === grp) || null;
+const ruleOwner = (stage, grp) => {
+  const r = ruleFor(stage, grp);
+  return r ? (S.people.find(p => p.id === r.profile_id) || {}).full_name : null;
+};
+/* a stage is either split by location or not - never half of each */
+const ruleSplit = stage => !!ruleFor(stage, "bangalore") || !!ruleFor(stage, "cbe_erode");
+
 /* ---- what the studio still owes its own feed ---- */
 /* Three kinds of material come off one shoot. Each is listed on its own and
    ticked off on its own, so a job can be half-posted. */
@@ -517,14 +534,16 @@ function slotNeeded(job, toStage) {
 
 /* ------------------------------------------------------------ data */
 async function loadReference() {
-  const [st, se, pf, pa, ty] = await Promise.all([
+  const [st, se, pf, pa, ty, ar] = await Promise.all([
     sb.from("stages").select("*").order("ordinal"),
     sb.from("settings").select("key,value"),
     sb.from("profiles").select("id,full_name,email,is_admin,active").order("full_name"),
     sb.from("profile_access").select("profile_id,module"),
-    sb.from("shoot_types").select("name,sort,brochure_url,terms_url,guide_url,prep_kind").order("sort")
+    sb.from("shoot_types").select("name,sort,brochure_url,terms_url,guide_url,prep_kind").order("sort"),
+    sb.from("assign_rules").select("stage,loc_group,profile_id")
   ]);
-  for (const r of [st, se, pf, pa, ty]) if (r.error) throw r.error;
+  for (const r of [st, se, pf, pa, ty, ar]) if (r.error) throw r.error;
+  S.rules = ar.data || [];
   S.typeRows = ty.data || [];
   S.types = S.typeRows.map(t => t.name);
   S.stages = st.data || [];
@@ -1631,6 +1650,41 @@ const A = {
     }
     A.closeModal();
     await refresh("Thank-you sent to " + data.to);
+  },
+
+  /* ---- the routing rules ---- */
+  async setRule(stage, grp, profileId) {
+    if (!profileId) {
+      const { error } = await sb.from("assign_rules").delete()
+        .eq("stage", stage).eq("loc_group", grp);
+      if (error) return fail(error);
+    } else {
+      const { error } = await sb.from("assign_rules")
+        .upsert({ stage, loc_group: grp, profile_id: profileId, updated_at: new Date().toISOString() },
+                { onConflict: "stage,loc_group" });
+      if (error) return fail(error);
+    }
+    await loadReference();
+    render();
+    toast(profileId ? "Rule saved" : "Rule removed");
+  },
+  /* switching a stage between one rule and a per-location pair */
+  async splitRule(stage, split) {
+    const rows = (S.rules || []).filter(r => r.stage === stage);
+    const current = rows.length ? rows[0].profile_id : null;
+    if (split) {
+      await sb.from("assign_rules").delete().eq("stage", stage).eq("loc_group", "any");
+      if (current) await sb.from("assign_rules").upsert([
+        { stage, loc_group: "bangalore", profile_id: current },
+        { stage, loc_group: "cbe_erode", profile_id: current }
+      ], { onConflict: "stage,loc_group" });
+    } else {
+      await sb.from("assign_rules").delete().eq("stage", stage).in("loc_group", ["bangalore", "cbe_erode"]);
+      if (current) await sb.from("assign_rules")
+        .upsert({ stage, loc_group: "any", profile_id: current }, { onConflict: "stage,loc_group" });
+    }
+    await loadReference();
+    render();
   },
 
   /* ---- is this worth putting out? ---- */
