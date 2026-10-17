@@ -109,12 +109,13 @@ function toast(msg, isErr) {
   el.textContent = msg;
   el.className = "toast on" + (isErr ? " err" : "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.className = "toast"), 3200);
+  /* a refusal explains what to do next, so give it time to be read */
+  toastTimer = setTimeout(() => (el.className = "toast"), isErr ? 7000 : 3200);
 }
 function fail(e) {
   console.error(e);
   let m = (e && (e.message || e.error_description)) || "Something went wrong";
-  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting|Name the Production Head|Record what was discussed|Say whether these photos|Say whether this video)/, "$1");   // database messages read fine as-is
+  m = m.replace(/^.*?(Set a shoot|A confirmed shoot|Record the advance|A phone number|Pick a shoot|Set the total|Fill in the delivery|Say what the video|Set the album|Set the frame|Email the terms|The total package|Say where the shoot|Enter how many files|Record the payment|A phone number must|Add the Pixieset|Enter how many files were edited|Enter the address|The video is still|The album is not|The frame is not|Not ready|The digital files|This package has no|A job can only move back|A booked shoot cannot|Paste the list of files|The client has not sent|These are not in|Your selection is already|This link is not|Pick at least one|Add the client email|A payment cannot be dated|A UPI payment|A Card payment|A Cheque payment|A Bank transfer payment|Their selection is already|Review the shoot|Write up what the shoot|This job is not waiting|Name the Production Head|Record what was discussed|Say whether these photos|Say whether this video|Say who booked|Assign a photographer|Pre-production is not finished)/, "$1");   // database messages read fine as-is
   toast(m, true);
 }
 
@@ -1023,7 +1024,10 @@ const A = {
     if (emailNeeded(j, to)) return A.editContact(id, to);
     if (packageNeeded(j, to)) return A.editPackage(id, to);
     if (termsNeeded(j, to)) return A.previewEmail(id, to);
-    if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)))
+    /* the booking sheet is also where "who booked it" is picked, so a job that
+       only lacks that still has to come through here */
+    if (crossingIntoBooked && (num(j.amount_received) <= 0 || (!j.shoot_at && !j.shoot_tbd)
+        || !j.booked_by))
       return A.bookJob(id, to);
     if (slotNeeded(j, to)) return A.setShoot(id, to);
     /* the date comes first, then who is doing it — prep is work for named people */
