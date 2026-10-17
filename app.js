@@ -712,9 +712,33 @@ const A = {
     const now = (r && r.answer && r.answer.state) || "open";
     A.setPrep(tid, { state: now === "na" ? "open" : "na" });
   },
-  prepValue(tid, v) {
+  async prepValue(tid, v) {
     const s = String(v || "").trim();
-    A.setPrep(tid, { value: s || null, state: s ? "done" : "open" });
+    await A.setPrep(tid, { value: s || null, state: s ? "done" : "open" });
+    /* some questions only matter if the one above them was a yes */
+    await A.prepCascade(tid, s);
+  },
+  /* Answer "no" to a parent and everything hanging off it stops applying;
+     answer "yes" and those questions come back open. */
+  async prepCascade(tid, value) {
+    const kids = (S.prep || []).filter(r => r.depends_on === tid);
+    if (!kids.length) return;
+    const row = (S.prep || []).find(r => r.template_id === tid);
+    if (!row || row.control !== "yesno") return;
+    const off = value === "no";
+    const rows = kids.map(k => ({
+      job_id: S.prepJob, template_id: k.template_id,
+      state: off ? "na" : "open",
+      value: (k.answer && k.answer.value) || null,
+      note: (k.answer && k.answer.note) || null,
+      actor_id: S.me.id
+    }));
+    const { error } = await sb.from("job_prep").upsert(rows, { onConflict: "job_id,template_id" });
+    if (error) return fail(error);
+    await loadPrep(S.prepJob, prepKindFor(S.jobs.find(x => x.id === S.prepJob)));
+    render();
+    if (off) toast(kids.length === 1 ? "The question below it no longer applies"
+                                     : kids.length + " questions below it no longer apply");
   },
   prepNote(tid, v) { A.setPrep(tid, { note: String(v || "").trim() || null }); },
   closeModal() { $("modalHost").innerHTML = ""; },

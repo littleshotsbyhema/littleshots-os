@@ -177,7 +177,7 @@ details.dev pre{background:var(--surface);border:1px solid var(--line);border-ra
     <nav class="cats" aria-label="Session type">
       <button class="cat" id="cat-maternity" aria-pressed="true">Maternity</button>
       <button class="cat" id="cat-newborn" disabled>Newborn <em>soon</em></button>
-      <button class="cat" id="cat-sitter" disabled>Sitter <em>soon</em></button>
+      <button class="cat" id="cat-sitter">Sitter</button>
     </nav>
     </div>
   </header>
@@ -191,16 +191,18 @@ details.dev pre{background:var(--surface);border:1px solid var(--line);border-ra
           <label class="f">Name<input type="text" id="c-name" autocomplete="off"></label>
           <label class="f">WhatsApp number<input type="tel" id="c-phone" inputmode="tel" autocomplete="off" placeholder="98XXXXXXXX"></label>
           <label class="f">Preferred shoot date<input type="date" id="c-date"></label>
-          <label class="f">Weeks pregnant (optional)<input type="number" id="c-weeks" min="12" max="40" inputmode="numeric"></label>
+          <label class="f" data-pkgonly>Weeks pregnant (optional)<input type="number" id="c-weeks" min="12" max="40" inputmode="numeric"></label>
         </div>
       </section>
 
-      <section class="block">
+      <div id="ala"></div>
+
+      <section class="block" data-pkgonly>
         <p class="eyebrow">Package</p>
         <div class="pkgs" id="pkgs"></div>
       </section>
 
-      <section class="block">
+      <section class="block" data-pkgonly>
         <p class="eyebrow">Customise package</p>
         <p style="margin:0;font-size:13px;color:var(--muted)">Switch off anything the client doesn't want. The deduction shows as its own line on the quote.</p>
         <div class="rows" id="items"></div>
@@ -223,7 +225,7 @@ details.dev pre{background:var(--surface);border:1px solid var(--line);border-ra
         <div class="notice" id="elig"></div>
       </section>
 
-      <section class="block">
+      <section class="block" data-pkgonly>
         <p class="eyebrow">Add-ons</p>
         <div class="rows" id="addons"></div>
       </section>
@@ -310,6 +312,8 @@ const state = {
   package:'gold',
   social:true, outdoor:false, outdoor_inr:0,
   addons:{},
+  qty:{},                   // à-la-carte: {itemCode: how many}
+  mods:{},                  // à-la-carte: {twin:true, marketing:true}
   removed:{},               // {packageCode: {itemKey: deduction}}
   custom:[],
   discount_inr:0,
@@ -319,12 +323,56 @@ const state = {
 const hash = (location.hash||'').replace('#','').toLowerCase();
 if (['bronze','gold','diamond','emerald'].includes(hash)) state.package = hash;
 
+/* Sitter is quoted line by line. These are starting prices; the live ones come
+   from the quote_catalogue_sitter settings row, same as maternity. */
+CAT.categories.sitter = {
+  mode:'alacarte', label:'Sitter', advance_pct:30,
+  groups:[
+    {name:'Session', items:[
+      {code:'creative_setup', label:'Creative setup', sub:'Includes 4 edited images', unit_inr:6500, kind:'qty', max:10},
+      {code:'standard_setup', label:'Standard setup', sub:'Includes 2 edited images', unit_inr:3000, kind:'qty', max:10},
+      {code:'family_session', label:'Family session', sub:'1 setup, includes 8 edited images', unit_inr:8000, kind:'qty', max:5},
+      {code:'mom_gown', label:'Mom gown', sub:'From our wardrobe', unit_inr:2000, kind:'qty', max:5},
+      {code:'mom_makeup', label:'Mom makeup', unit_inr:4000, kind:'qty', max:5},
+      {code:'extra_family_member', label:'Additional family member', sub:'Per member', unit_inr:1000, kind:'qty', max:10}
+    ]},
+    {name:'Deliverables', items:[
+      {code:'unedited_setup', label:'Unedited files – creative or standard setup', sub:'Per setup', unit_inr:1500, kind:'qty', max:10},
+      {code:'unedited_family', label:'Unedited files – family session', unit_inr:2000, kind:'qty', max:5},
+      {code:'extra_edited', label:'Additional edited image', sub:'Beyond what the setups include', unit_inr:500, kind:'qty', max:60},
+      {code:'reel_short', label:'Reel – 20 to 25 sec, one setup', unit_inr:6000, kind:'toggle'},
+      {code:'reel_long', label:'Reel – 30 to 45 sec, two setups', unit_inr:10000, kind:'toggle'}
+    ]},
+    {name:'Prints', items:[
+      {code:'album_10x10_10', label:'Album 10×10, 10 sheets', unit_inr:5000, kind:'qty', max:5},
+      {code:'album_10x10_15', label:'Album 10×10, 15 sheets', unit_inr:6000, kind:'qty', max:5},
+      {code:'frame_8x12', label:'Frame 8×12', unit_inr:1000, kind:'qty', max:10},
+      {code:'frame_12x18', label:'Frame 12×18', unit_inr:1500, kind:'qty', max:10},
+      {code:'frame_16x24', label:'Frame 16×24', unit_inr:2500, kind:'qty', max:10},
+      {code:'frame_24x36', label:'Frame 24×36', unit_inr:4000, kind:'qty', max:10}
+    ]}
+  ],
+  modifiers:[
+    {code:'twin', label:'Twin handling', sub:'Adds 20% to everything above', pct:20},
+    {code:'marketing', label:'Marketing discount', sub:'Takes 10% off, applied last', pct:-10}
+  ],
+  terms:[
+    'Advance payment confirms your booking slot. Dates are reserved only on confirmation.',
+    'Editing begins after 100% payment. Edited images are delivered 3–4 weeks after final selection.',
+    'Frames are ready 2 weeks and albums 4 weeks after edited images are delivered (albums after design approval). Collect from the studio within 30 days of the pickup notification.',
+    'Courier or home delivery only on request; packing and shipping are charged to the client.',
+    'Additional edited images beyond the setups are charged at the rate shown above.'
+  ]
+};
+
 const cat = () => CAT.categories[state.category];
+const isAla = () => cat().mode === 'alacarte';
 const pkg = () => cat().packages.find(p => p.code === state.package);
 
 /* ---------- pure pricing: the function the app can reuse as-is ---------- */
 function buildQuote(catalogue, s){
   const c = catalogue.categories[s.category];
+  if (c.mode === 'alacarte') return buildAlaCarte(catalogue, c, s);
   const p = c.packages.find(x => x.code === s.package);
   const offerEligible = s.social && !s.outdoor;
   const pkgPrice = offerEligible ? p.offer_inr : p.mrp_inr;
@@ -359,6 +407,47 @@ function buildQuote(catalogue, s){
     lines, subtotal_inr:subtotal, discount_inr:discount, total_inr:total,
     offer_saving_inr: offerEligible ? p.mrp_inr - p.offer_inr : 0,
     advance_inr:advance, balance_inr:total-advance
+  };
+}
+/* Line by line: every item the client picked, then the percentage modifiers.
+   Twin handling lifts the whole lot; the marketing discount comes off last,
+   so it applies to the twin-adjusted figure too. */
+function buildAlaCarte(catalogue, c, s){
+  const lines = [];
+  (c.groups || []).forEach(g => (g.items || []).forEach(it => {
+    const q = it.kind === 'toggle' ? (s.qty[it.code] ? 1 : 0) : (Number(s.qty[it.code]) || 0);
+    if (q > 0) lines.push({code:it.code, kind:'item', group:g.name, label:it.label,
+                           qty:q, unit_inr:it.unit_inr, total_inr:q * it.unit_inr});
+  }));
+  if (s.outdoor && s.outdoor_inr > 0)
+    lines.push({code:'outdoor', kind:'addon', group:'Session', label:'Outdoor session – travel & convenience',
+                qty:1, unit_inr:s.outdoor_inr, total_inr:s.outdoor_inr});
+  s.custom.forEach((x,i) => { const a = Number(x.amount)||0;
+    if (x.label && a) lines.push({code:'custom_'+(i+1), kind:'custom', label:x.label, qty:1, unit_inr:a, total_inr:a}); });
+
+  const itemsTotal = lines.reduce((t,l) => t + l.total_inr, 0);
+  /* each modifier works on the running total, in the order they are listed */
+  let running = itemsTotal;
+  (c.modifiers || []).forEach(m => {
+    if (!s.mods[m.code]) return;
+    const amt = Math.round(running * m.pct / 100);
+    lines.push({code:m.code, kind:'modifier', label:m.label + ' (' + (m.pct>0?'+':'') + m.pct + '%)',
+                qty:1, unit_inr:amt, total_inr:amt});
+    running += amt;
+  });
+
+  const subtotal = running;
+  const discount = Math.min(Math.max(0, Number(s.discount_inr)||0), subtotal);
+  const total = Math.max(0, subtotal - discount);
+  const autoAdv = Math.round(total*(c.advance_pct ?? 30)/100/500)*500;
+  const advance = Math.min(total, s.advance_inr == null ? autoAdv : Math.max(0, s.advance_inr));
+  return {
+    quote_no:s.quote_no, quote_date:iso(today), category:s.category, catalogue_version:catalogue.version,
+    mode:'alacarte', client:{...s.client},
+    package_id:null, package_code:null, customised:false, removed_items:[], pricing:'list',
+    social_permission:s.social, outdoor:s.outdoor,
+    lines, items_total_inr:itemsTotal, subtotal_inr:subtotal, discount_inr:discount, total_inr:total,
+    offer_saving_inr:0, advance_inr:advance, balance_inr:total-advance
   };
 }
 window.LSHQuote = {get catalogue(){ return CAT; }, buildQuote};
@@ -458,6 +547,111 @@ function renderSheet(q){
     <div class="ft"><i>LittleShots by Hema</i><span>@littleshotsbyhema · Coimbatore</span></div>`;
 }
 
+/* ---------- the line-by-line builder ---------- */
+function renderAlaForm(){
+  const c = cat();
+  $('ala').innerHTML = (c.groups || []).map(g => `
+    <section class="block">
+      <p class="eyebrow">${esc(g.name)}</p>
+      <div class="rows">
+        ${g.items.map(it => {
+          const q = it.kind === 'toggle' ? (state.qty[it.code] ? 1 : 0) : (state.qty[it.code] || 0);
+          return `<div class="row">
+            <div class="lbl">${esc(it.label)}<small>${it.sub ? esc(it.sub) + ' · ' : ''}${inr(it.unit_inr)}${it.kind==='qty'?' each':''}</small></div>
+            <span class="n" style="min-width:74px;text-align:right">${q ? inr(q*it.unit_inr) : ''}</span>
+            ${it.kind === 'toggle'
+              ? `<label class="switch"><input type="checkbox" data-alatoggle="${it.code}" ${q?'checked':''} aria-label="${esc(it.label)}"><span></span></label>`
+              : `<span class="qty"><button class="qbtn" data-aladec="${it.code}" aria-label="Fewer ${esc(it.label)}">−</button><b>${q}</b><button class="qbtn" data-alainc="${it.code}" aria-label="More ${esc(it.label)}">+</button></span>`}
+          </div>`;
+        }).join('')}
+      </div>
+    </section>`).join('') + `
+    <section class="block">
+      <p class="eyebrow">Adjustments</p>
+      <div class="rows">
+        ${(c.modifiers || []).map(m => `<div class="row">
+          <div class="lbl">${esc(m.label)}<small>${esc(m.sub||'')}</small></div>
+          <span></span>
+          <label class="switch"><input type="checkbox" data-alamod="${m.code}" ${state.mods[m.code]?'checked':''} aria-label="${esc(m.label)}"><span></span></label>
+        </div>`).join('')}
+      </div>
+    </section>`;
+}
+
+function renderAla(){
+  current = buildQuote(CAT, state);
+  renderAlaForm();
+  $('outdoor-wrap').style.visibility = state.outdoor ? 'visible' : 'hidden';
+  const el = $('elig');
+  el.className = 'notice';
+  el.textContent = 'Sitter sessions are quoted line by line, so there is no separate offer price.';
+  if (state.advance_inr == null) $('advance').value = current.advance_inr;
+  $('adv-hint').textContent = state.advance_inr == null
+    ? `Pre-filled at ${cat().advance_pct ?? 30}% of the total. Type to override.`
+    : 'Custom amount. Clear the field to go back to the default.';
+  renderAlaSheet(current);
+  $('json').textContent = JSON.stringify(current, null, 2);
+  $('bar-total').textContent = inr(current.total_inr);
+  const setups = (state.qty.creative_setup||0) + (state.qty.standard_setup||0) + (state.qty.family_session||0);
+  $('bar-pkg').textContent = `${setups} setup${setups===1?'':'s'} · advance ${inr(current.advance_inr)}`;
+  const phone = (state.client.phone||'').replace(/\D/g,'');
+  const num = phone.length === 10 ? '91'+phone : phone;
+  $('b-wa').href = `https://wa.me/${num}?text=${encodeURIComponent(waAlaText(current))}`;
+}
+
+function renderAlaSheet(q){
+  const c = q.client;
+  const items = q.lines.filter(l => l.kind !== 'modifier');
+  const mods = q.lines.filter(l => l.kind === 'modifier');
+  $('sheet').innerHTML = `
+    <div class="hd">
+      <div class="mark">Sitter Quote<small>LittleShots by Hema</small></div>
+      <div class="meta">Quote <b>${q.quote_no}</b><br>Date ${niceDate(q.quote_date)}</div>
+    </div>
+    <div class="to">
+      <div><span>Prepared for</span>${esc(c.name)||'—'}${c.phone?`<br>${esc(c.phone)}`:''}</div>
+      <div><span>Preferred shoot date</span>${niceDate(c.shoot_date)||'To be confirmed'}<br>${q.outdoor?'Outdoor session':'At our studio'}</div>
+    </div>
+    <table>
+      <thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead>
+      <tbody>
+        ${items.length ? items.map(l=>`<tr><td>${esc(l.label)}${l.qty>1?`<small>${inr(l.unit_inr)} each</small>`:''}</td><td class="n">${l.qty}</td><td class="n">${inr(l.total_inr)}</td></tr>`).join('')
+          : `<tr><td colspan="3" style="color:#8A817B">Nothing chosen yet</td></tr>`}
+      </tbody>
+    </table>
+    <div class="tot">
+      ${mods.length?`<div><span>Items</span><span>${inr(q.items_total_inr)}</span></div>`:''}
+      ${mods.map(m=>`<div class="${m.total_inr<0?'save':''}"><span>${esc(m.label)}</span><span>${m.total_inr<0?'− '+inr(-m.total_inr):inr(m.total_inr)}</span></div>`).join('')}
+      ${q.discount_inr?`<div class="save"><span>Special discount</span><span>− ${inr(q.discount_inr)}</span></div>`:''}
+      <div class="grand"><span>Total</span><b>${inr(q.total_inr)}</b></div>
+    </div>
+    <div class="pay">
+      <div>Advance to confirm your date<b>${inr(q.advance_inr)}</b></div>
+      <div>Balance before editing begins<b>${inr(q.balance_inr)}</b></div>
+    </div>
+    ${c.note?`<p class="nt">${esc(c.note)}</p>`:''}
+    <div><h3>Good to know</h3><ol class="terms">${cat().terms.map(t=>`<li>${t}</li>`).join('')}</ol></div>
+    <div class="ft"><i>LittleShots by Hema</i><span>@littleshotsbyhema · Coimbatore</span></div>`;
+}
+
+function waAlaText(q){
+  const L = [];
+  L.push(`Hi ${q.client.name ? q.client.name.replace(/\s*\(example\)/,'') : ''} 🤍`.replace(/\s+🤍/,' 🤍'));
+  L.push(`Here's your sitter shoot quote from *LittleShots by Hema*`);
+  L.push('');
+  q.lines.filter(l => l.kind !== 'modifier').forEach(l =>
+    L.push(`• ${l.label}${l.qty>1?` ×${l.qty}`:''} — ${inr(l.total_inr)}`));
+  q.lines.filter(l => l.kind === 'modifier').forEach(l =>
+    L.push(`${l.label}: ${l.total_inr<0?'− '+inr(-l.total_inr):inr(l.total_inr)}`));
+  if (q.discount_inr) L.push(`Special discount: − ${inr(q.discount_inr)}`);
+  L.push('');
+  L.push(`*Total ${inr(q.total_inr)}*`);
+  L.push(`Advance to confirm the date: ${inr(q.advance_inr)}`);
+  L.push(`Balance before editing begins: ${inr(q.balance_inr)}`);
+  if (q.client.note) { L.push(''); L.push(q.client.note); }
+  return L.join('\n');
+}
+
 /* ---------- WhatsApp text ---------- */
 function waText(q){
   const p = pkg();
@@ -486,6 +680,7 @@ function waText(q){
 /* ---------- master render ---------- */
 let current;
 function render(){
+  if (isAla()) return renderAla();
   const p = pkg();
   current = buildQuote(CAT, state);
   document.querySelectorAll('.pkg').forEach(b => b.setAttribute('aria-pressed', b.dataset.code===state.package));
@@ -512,6 +707,42 @@ $('c-name').value = state.client.name; $('c-date').value = state.client.shoot_da
 $('t-social').checked = state.social; $('t-outdoor').checked = state.outdoor;
 
 $('pkgs').addEventListener('click', e => { const b = e.target.closest('.pkg'); if(!b) return; state.package = b.dataset.code; render(); });
+/* Switching session type reshapes the whole form, so the quote number goes
+   with it - a sitter quote should not carry a maternity reference. */
+function setCategory(name){
+  if (!CAT.categories[name] || state.category === name) return;
+  state.category = name;
+  state.advance_inr = null;
+  $('advance').value = '';
+  const pre = name === 'maternity' ? 'MAT' : name.slice(0,3).toUpperCase();
+  state.quote_no = 'LSH-' + pre + '-' + iso(today).slice(2).replace(/-/g,'') + '-' +
+    String(today.getHours()).padStart(2,'0') + String(today.getMinutes()).padStart(2,'0');
+  document.querySelectorAll('[data-pkgonly]').forEach(el => { el.style.display = isAla() ? 'none' : ''; });
+  $('ala').style.display = isAla() ? '' : 'none';
+  document.querySelectorAll('.cats .cat').forEach(b =>
+    b.setAttribute('aria-pressed', b.id === 'cat-' + name));
+  if (!isAla()) { renderPackages(); renderItems(); }
+  render();
+}
+$('cat-maternity').addEventListener('click', () => setCategory('maternity'));
+$('cat-sitter').addEventListener('click', () => setCategory('sitter'));
+
+$('ala').addEventListener('click', e => {
+  const inc = e.target.closest('[data-alainc]'), dec = e.target.closest('[data-aladec]');
+  if (inc){
+    const k = inc.dataset.alainc;
+    const def = (cat().groups||[]).flatMap(g=>g.items).find(i=>i.code===k) || {};
+    state.qty[k] = Math.min(def.max ?? 99, (state.qty[k]||0) + 1); render();
+  }
+  if (dec){ const k = dec.dataset.aladec; state.qty[k] = Math.max(0,(state.qty[k]||0) - 1); render(); }
+});
+$('ala').addEventListener('change', e => {
+  const t = e.target.closest('[data-alatoggle]');
+  if (t){ state.qty[t.dataset.alatoggle] = t.checked ? 1 : 0; render(); return; }
+  const m = e.target.closest('[data-alamod]');
+  if (m){ state.mods[m.dataset.alamod] = m.checked; render(); }
+});
+
 $('addons').addEventListener('click', e => {
   const inc = e.target.closest('[data-inc]'), dec = e.target.closest('[data-dec]');
   if (inc){ const k=inc.dataset.inc; state.addons[k]=(state.addons[k]||0)+1; render(); }
@@ -601,6 +832,7 @@ $('b-pdf').addEventListener('click', async e => {
 /* Live prices: the settings row below. Every signed-in team member reads it; the
    database only lets admins write it (settings_admin policy), whatever this page shows. */
 const CFG_KEY = 'quote_catalogue_maternity';
+const CFG_KEY_SITTER = 'quote_catalogue_sitter';
 const SUPABASE_URL = "https://bdadnmwauyarukqvfbvd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_xnepieuyFIwBqGwtwMJ7Sg_FovsaMNe";
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {auth:{persistSession:true, autoRefreshToken:false}}) : null;   // the app refreshes the shared session; this page only reads it
@@ -689,15 +921,27 @@ async function loadLive(){
   if (!sb) return;
   const { data: { session } } = await sb.auth.getSession();
   if (!session){ $('signin').hidden = false; return; }
-  const [cfg, me] = await Promise.all([
+  const [cfg, sit, me] = await Promise.all([
     sb.from('settings').select('value').eq('key', CFG_KEY).maybeSingle(),
+    sb.from('settings').select('value').eq('key', CFG_KEY_SITTER).maybeSingle(),
     sb.from('profiles').select('is_admin,active').eq('id', session.user.id).maybeSingle()
   ]);
   if (cfg.data && cfg.data.value){
     try { const v = JSON.parse(cfg.data.value); if (v.category && v.category.packages){ applyCategory(v.category); showSaved(v.updated_at); } } catch {}
   }
+  /* the sitter list is a different shape - groups of line items, no packages */
+  if (sit.data && sit.data.value){
+    try {
+      const v = JSON.parse(sit.data.value);
+      if (v.category && v.category.groups){ CAT.categories.sitter = clone(v.category); render(); }
+    } catch {}
+  }
   if (me.data && me.data.is_admin && me.data.active) $('b-settings').hidden = false;
 }
+/* the page opens on maternity, so the line-by-line block starts hidden */
+$('ala').style.display = 'none';
+if ((location.hash||'').toLowerCase() === '#sitter') setCategory('sitter');
+
 if (window.self !== window.top) document.body.classList.add('embedded');
 loadLive().catch(() => {});
 

@@ -1026,7 +1026,9 @@ function prepView() {
           : `<span class="pbox ${st === "done" ? "on" : ""} ${st === "na" ? "nabox" : ""}">${
               st === "done" ? "✓" : st === "na" ? "—" : ""}</span>`}
         <span class="plab">${esc(r.item)}
-          ${r.description ? `<span class="phint">${esc(r.description)}</span>` : ""}</span>
+          ${r.description ? `<span class="phint">${esc(r.description)}</span>` : ""}
+          ${r.depends_on && st === "na"
+            ? `<span class="phint">Not needed — the question above was answered no.</span>` : ""}</span>
         ${r.allow_na ? `<button class="pna ${st === "na" ? "on" : ""}"
           onclick="A.prepNA(${r.template_id})" title="Not applicable">N/A</button>` : ""}
       </div>
