@@ -444,9 +444,7 @@ function buildAlaCarte(catalogue, c, s){
       return;
     }
     const q = it.kind === 'toggle' ? (s.qty[it.code] ? 1 : 0) : (Number(s.qty[it.code]) || 0);
-    if (q > 0) lines.push({code:it.code, kind:'item', group:g.name,
-                           label:it.label + (it.edited_each && it.kind === 'qty' && it.code !== 'extra_edited'
-                             ? ' – ' + (q * it.edited_each) + ' edited images' : ''),
+    if (q > 0) lines.push({code:it.code, kind:'item', group:g.name, label:it.label,
                            qty:q, unit_inr:it.unit_inr, total_inr:q * it.unit_inr});
   }));
   if (s.outdoor && s.outdoor_inr > 0)
@@ -477,10 +475,26 @@ function buildAlaCarte(catalogue, c, s){
     package_id:null, package_code:null, customised:false, removed_items:[], pricing:'list',
     social_permission:s.social, outdoor:s.outdoor,
     lines, items_total_inr:itemsTotal, subtotal_inr:subtotal, discount_inr:discount, total_inr:total,
-    edited_images:edited, unedited_included: !!s.mods && !!s.qty.unedited && uneditedTotal > 0,
+    deliverables: alaDeliverables(lines, edited, !!s.qty.unedited && uneditedTotal > 0, uneditedSetups),
+    edited_images:edited, unedited_included: !!s.qty.unedited && uneditedTotal > 0,
     social_shared: (c.modifiers||[]).some(m => m.social && s.mods[m.code]),
     offer_saving_inr:0, advance_inr:advance, balance_inr:total-advance
   };
+}
+/* Everything the client goes home with, in the order they care about. Prints
+   and films only appear once they are actually on the quote. */
+function alaDeliverables(lines, edited, uneditedOn, setups){
+  const out = [];
+  if (edited) out.push(edited + ' premium edited image' + (edited===1?'':'s'));
+  if (uneditedOn) out.push('All unedited files from your ' + setups + ' setup' + (setups===1?'':'s'));
+  /* the preview gallery is how they choose when they are not getting everything */
+  else out.push('Watermarked preview gallery to choose from');
+  lines.filter(l => /^reel/.test(l.code)).forEach(l => out.push(l.label.replace(/^Reel – /, 'Reel, ')));
+  lines.filter(l => /^album/.test(l.code)).forEach(l =>
+    out.push((l.qty>1 ? l.qty + ' × ' : '') + l.label));
+  lines.filter(l => /^frame/.test(l.code)).forEach(l =>
+    out.push((l.qty>1 ? l.qty + ' × ' : '') + l.label));
+  return out;
 }
 window.LSHQuote = {get catalogue(){ return CAT; }, buildQuote};
 
@@ -665,11 +679,9 @@ function renderAlaSheet(q){
           : `<tr><td colspan="3" style="color:#8A817B">Nothing chosen yet</td></tr>`}
       </tbody>
     </table>
-    ${q.edited_images ? `<div class="cols"><div><h3>You receive</h3><ul>
-      <li>${q.edited_images} premium edited image${q.edited_images===1?'':'s'}</li>
-      ${q.unedited_included?'<li>All unedited files from your setups</li>':''}
-      <li>Watermarked preview gallery to choose from</li></ul></div>
-      ${q.social_shared?`<div><h3>Good to know</h3><ul>
+    ${q.deliverables.length ? `<div class="cols"><div><h3>Deliverables</h3><ul>
+      ${q.deliverables.map(d => `<li>${esc(d)}</li>`).join('')}</ul></div>
+      ${q.social_shared?`<div><h3>Image sharing</h3><ul>
         <li>This price includes the social media discount, so we may share selected images from your session on our portfolio and social media.</li></ul></div>`:'<div></div>'}</div>` : ''}
     <div class="tot">
       ${mods.length?`<div><span>Items</span><span>${inr(q.items_total_inr)}</span></div>`:''}
@@ -693,7 +705,8 @@ function waAlaText(q){
   L.push('');
   q.lines.filter(l => l.kind !== 'modifier').forEach(l =>
     L.push(`• ${l.label}${l.qty>1?` ×${l.qty}`:''} — ${inr(l.total_inr)}`));
-  if (q.edited_images){ L.push(''); L.push(`*${q.edited_images} premium edited images* included`); }
+  if (q.deliverables.length){ L.push(''); L.push('*You receive*');
+    q.deliverables.forEach(d => L.push(`• ${d}`)); }
   q.lines.filter(l => l.kind === 'modifier').forEach(l =>
     L.push(`${l.label}: ${l.total_inr<0?'− '+inr(-l.total_inr):inr(l.total_inr)}`));
   if (q.discount_inr) L.push(`Special discount: − ${inr(q.discount_inr)}`);
