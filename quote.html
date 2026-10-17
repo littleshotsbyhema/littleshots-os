@@ -185,7 +185,7 @@ details.dev pre{background:var(--surface);border:1px solid var(--line);border-ra
     <button class="btn ghost" id="b-settings" hidden>Prices &amp; settings</button>
     <nav class="cats" aria-label="Session type">
       <button class="cat" id="cat-maternity" aria-pressed="true">Maternity</button>
-      <button class="cat" id="cat-newborn" disabled>Newborn <em>soon</em></button>
+      <button class="cat" id="cat-newborn">Newborn</button>
       <button class="cat" id="cat-sitter">Sitter</button>
     </nav>
     </div>
@@ -372,6 +372,23 @@ CAT.categories.sitter = {
     'Additional edited images beyond the setups are charged at the rate shown above.'
   ]
 };
+
+/* Newborn is quoted the same way as sitter. Only the setups differ: a newborn
+   session is sold by what the baby is posed in, not by how elaborate it is. */
+CAT.categories.newborn = (() => {
+  const c = JSON.parse(JSON.stringify(CAT.categories.sitter));
+  c.label = 'Newborn';
+  const session = c.groups.find(g => g.name === 'Session');
+  const common = {unit_inr:6500, kind:'qty', max:10, edited_each:4, unedited_inr:1500,
+                  sub:'Includes 4 edited images'};
+  session.items.splice(0, 2,
+    {code:'dress_setup', label:'Dress based setup', ...common},
+    {code:'wrap_setup',  label:'Wrap based setup',  ...common},
+    {code:'macro_shots', label:'Macro shots',       ...common},
+    {code:'beanbag_setup', label:'Bean bag or flokati setup', sub:'Includes 2 edited images',
+     unit_inr:3000, kind:'qty', max:10, edited_each:2, unedited_inr:1500});
+  return c;
+})();
 
 const cat = () => CAT.categories[state.category];
 const isAla = () => cat().mode === 'alacarte';
@@ -644,7 +661,7 @@ function renderAla(){
   $('outdoor-wrap').style.visibility = state.outdoor ? 'visible' : 'hidden';
   const el = $('elig');
   el.className = 'notice';
-  el.textContent = 'Sitter sessions are quoted line by line, so there is no separate offer price.';
+  el.textContent = `${cat().label || 'These'} sessions are quoted line by line, so there is no separate offer price.`;
   if (state.advance_inr == null) $('advance').value = current.advance_inr;
   $('adv-hint').textContent = state.advance_inr == null
     ? `Pre-filled at ${cat().advance_pct ?? 30}% of the total. Type to override.`
@@ -652,7 +669,10 @@ function renderAla(){
   renderAlaSheet(current);
   $('json').textContent = JSON.stringify(current, null, 2);
   $('bar-total').textContent = inr(current.total_inr);
-  const setups = (state.qty.creative_setup||0) + (state.qty.standard_setup||0) + (state.qty.family_session||0);
+  /* a setup is anything the unedited files are priced against, whatever it is
+     called in this category - sitter and newborn name them differently */
+  const setups = (cat().groups||[]).flatMap(g=>g.items)
+    .reduce((t,it) => t + (it.unedited_inr ? (Number(state.qty[it.code])||0) : 0), 0);
   $('bar-pkg').textContent = `${setups} setup${setups===1?'':'s'} · ${current.edited_images} edited · advance ${inr(current.advance_inr)}`;
   const phone = (state.client.phone||'').replace(/\D/g,'');
   const num = phone.length === 10 ? '91'+phone : phone;
@@ -665,7 +685,7 @@ function renderAlaSheet(q){
   const mods = q.lines.filter(l => l.kind === 'modifier');
   $('sheet').innerHTML = `
     <div class="hd">
-      <div class="mark">Sitter Quote<small>LittleShots by Hema</small></div>
+      <div class="mark">${esc(cat().label || 'Session')} Quote<small>LittleShots by Hema</small></div>
       <div class="meta">Quote <b>${q.quote_no}</b><br>Date ${niceDate(q.quote_date)}</div>
     </div>
     <div class="to">
@@ -701,7 +721,7 @@ function renderAlaSheet(q){
 function waAlaText(q){
   const L = [];
   L.push(`Hi ${q.client.name ? q.client.name.replace(/\s*\(example\)/,'') : ''} 🤍`.replace(/\s+🤍/,' 🤍'));
-  L.push(`Here's your sitter shoot quote from *LittleShots by Hema*`);
+  L.push(`Here's your ${(cat().label||'session').toLowerCase()} shoot quote from *LittleShots by Hema*`);
   L.push('');
   q.lines.filter(l => l.kind !== 'modifier').forEach(l =>
     L.push(`• ${l.label}${l.qty>1?` ×${l.qty}`:''} — ${inr(l.total_inr)}`));
@@ -781,7 +801,7 @@ function setCategory(name){
   state.category = name;
   state.advance_inr = null;
   $('advance').value = '';
-  const pre = name === 'maternity' ? 'MAT' : name.slice(0,3).toUpperCase();
+  const pre = {maternity:'MAT', newborn:'NB', sitter:'SIT'}[name] || name.slice(0,3).toUpperCase();
   state.quote_no = 'LSH-' + pre + '-' + iso(today).slice(2).replace(/-/g,'') + '-' +
     String(today.getHours()).padStart(2,'0') + String(today.getMinutes()).padStart(2,'0');
   document.querySelectorAll('[data-pkgonly]').forEach(el => { el.style.display = isAla() ? 'none' : ''; });
@@ -792,6 +812,7 @@ function setCategory(name){
   render();
 }
 $('cat-maternity').addEventListener('click', () => setCategory('maternity'));
+$('cat-newborn').addEventListener('click', () => setCategory('newborn'));
 $('cat-sitter').addEventListener('click', () => setCategory('sitter'));
 
 $('ala').addEventListener('click', e => {
@@ -906,6 +927,7 @@ $('b-pdf').addEventListener('click', async e => {
    database only lets admins write it (settings_admin policy), whatever this page shows. */
 const CFG_KEY = 'quote_catalogue_maternity';
 const CFG_KEY_SITTER = 'quote_catalogue_sitter';
+const CFG_KEY_NEWBORN = 'quote_catalogue_newborn';
 const SUPABASE_URL = "https://bdadnmwauyarukqvfbvd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_xnepieuyFIwBqGwtwMJ7Sg_FovsaMNe";
 const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {auth:{persistSession:true, autoRefreshToken:false}}) : null;   // the app refreshes the shared session; this page only reads it
@@ -994,19 +1016,26 @@ async function loadLive(){
   if (!sb) return;
   const { data: { session } } = await sb.auth.getSession();
   if (!session){ $('signin').hidden = false; return; }
-  const [cfg, sit, me] = await Promise.all([
+  const [cfg, sit, nb, me] = await Promise.all([
     sb.from('settings').select('value').eq('key', CFG_KEY).maybeSingle(),
     sb.from('settings').select('value').eq('key', CFG_KEY_SITTER).maybeSingle(),
+    sb.from('settings').select('value').eq('key', CFG_KEY_NEWBORN).maybeSingle(),
     sb.from('profiles').select('is_admin,active').eq('id', session.user.id).maybeSingle()
   ]);
   if (cfg.data && cfg.data.value){
     try { const v = JSON.parse(cfg.data.value); if (v.category && v.category.packages){ applyCategory(v.category); showSaved(v.updated_at); } } catch {}
   }
-  /* the sitter list is a different shape - groups of line items, no packages */
+  /* the line-by-line lists are a different shape - groups of items, no packages */
   if (sit.data && sit.data.value){
     try {
       const v = JSON.parse(sit.data.value);
       if (v.category && v.category.groups){ CAT.categories.sitter = clone(v.category); render(); }
+    } catch {}
+  }
+  if (nb.data && nb.data.value){
+    try {
+      const v = JSON.parse(nb.data.value);
+      if (v.category && v.category.groups){ CAT.categories.newborn = clone(v.category); render(); }
     } catch {}
   }
   if (me.data && me.data.is_admin && me.data.active) $('b-settings').hidden = false;
