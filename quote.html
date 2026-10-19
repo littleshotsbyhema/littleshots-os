@@ -281,7 +281,7 @@ details.dev pre{background:var(--surface);border:1px solid var(--line);border-ra
 <div class="wrap" id="settings" hidden>
   <div class="set-hd">
     <div>
-      <p class="eyebrow">Maternity · prices &amp; settings</p>
+      <p class="eyebrow" id="set-title">Prices &amp; settings</p>
       <p class="set-meta" id="set-meta">Showing the starting prices (as saved on 25 Sep).</p>
     </div>
     <div class="actions">
@@ -901,8 +901,7 @@ function applyCategoryUI(){
     ? 'Park or location entry fees are paid by the client.'
     : 'Offer price applies to studio sessions only. Park or location entry fees are paid by the client.';
   $('elig').style.display = isAla() ? 'none' : '';
-  /* the prices screen only knows how to edit packages, and nothing uses those now */
-  if (isAla()) $('b-settings').hidden = true;
+
 }
 $('cat-maternity').addEventListener('click', () => setCategory('maternity'));
 $('cat-newborn').addEventListener('click', () => setCategory('newborn'));
@@ -1019,6 +1018,9 @@ $('b-pdf').addEventListener('click', async e => {
 /* Live prices: the settings row below. Every signed-in team member reads it; the
    database only lets admins write it (settings_admin policy), whatever this page shows. */
 const CFG_KEY = 'quote_catalogue_maternity';
+const CFG_KEY_FOR = {maternity:'quote_catalogue_maternity',
+                     newborn:'quote_catalogue_newborn',
+                     sitter:'quote_catalogue_sitter'};
 const CFG_KEY_SITTER = 'quote_catalogue_sitter';
 const CFG_KEY_NEWBORN = 'quote_catalogue_newborn';
 const SUPABASE_URL = "https://bdadnmwauyarukqvfbvd.supabase.co";
@@ -1070,7 +1072,62 @@ function renderSettings(){
       <div class="rows"><div class="row"><div class="lbl">Default advance<small>Percentage of the quote total, rounded to the nearest ₹500</small></div><span></span>
       <div class="inr" style="width:120px"><input type="number" id="s-adv" value="${c.advance_pct ?? 30}" min="0" max="100" step="5" aria-label="Advance percentage" style="padding-left:11px"></div></div></div></section>`;
 }
-function openSettings(){ draft = clone(cat()); renderSettings(); $('settings').hidden = false; $('builder').hidden = true; $('s-toast').textContent=''; window.scrollTo(0,0); }
+/* Prices for a line-by-line category: every item's unit price, the unedited
+   cap, the percentage adjustments and the large-order bands. Items are not
+   added or removed here - that is a change of what the studio sells. */
+function renderAlaSettings(){
+  const c = draft;
+  const money = (id, val, step) => `<div class="inr" style="width:130px">
+    <input type="number" id="${id}" data-ala="${id}" value="${val ?? ''}" min="0" step="${step || 500}"></div>`;
+  const groups = (c.groups || []).map(g => `
+    <section class="block set-addons"><p class="eyebrow">${esc(g.name)}</p>
+      <div class="rows">
+        ${g.items.map(it => {
+          if (it.kind === 'derived_unedited') return `<div class="row">
+            <div class="lbl">${esc(it.label)}<small>Charged per setup on each item below · cap</small></div>
+            <span></span>${money('cap|' + it.code, it.cap_inr, 500)}</div>`;
+          return `<div class="row">
+            <div class="lbl">${esc(it.label)}<small>${it.unedited_inr
+              ? 'unedited ₹' + it.unedited_inr + ' · ' : ''}${it.edited_each
+              ? it.edited_each + ' edited images' : 'no edited images'}</small></div>
+            <span></span>${money('item|' + it.code, it.unit_inr, 500)}</div>`;
+        }).join('')}
+      </div></section>`).join('');
+
+  const mods = (c.modifiers || []).map(m => `<div class="row">
+      <div class="lbl">${esc(m.label)}<small>${esc(m.sub || '')}</small></div>
+      <span></span><div class="inr" style="width:110px">
+        <input type="number" id="pct|${m.code}" data-ala="pct|${m.code}" value="${m.pct}" step="1">
+      </div></div>`).join('');
+
+  const v = c.volume || {};
+  $('set-body').innerHTML = `
+    <p class="set-meta" style="margin-bottom:14px">Change a price and save — everyone quoting
+      ${esc(c.label || '')} uses it from the next page load. Unedited files are priced per
+      setup from the per-item figure, then capped.</p>
+    ${groups}
+    ${mods ? `<section class="block set-addons"><p class="eyebrow">Adjustments</p>
+      <div class="rows">${mods}</div></section>` : ''}
+    <section class="block set-addons"><p class="eyebrow">Large order discount</p>
+      <div class="rows">
+        <div class="row"><div class="lbl">Starts above<small>Nothing is taken off below this</small></div>
+          <span></span>${money('vol|from_inr', v.from_inr, 1000)}</div>
+        <div class="row"><div class="lbl">For every<small>Size of each band</small></div>
+          <span></span>${money('vol|step_inr', v.step_inr, 1000)}</div>
+        <div class="row"><div class="lbl">Take off<small>Per band</small></div>
+          <span></span>${money('vol|per_step_inr', v.per_step_inr, 500)}</div>
+      </div></section>
+    <section class="block set-addons"><p class="eyebrow">Advance</p>
+      <div class="rows"><div class="row">
+        <div class="lbl">Default advance<small>Percentage of the total, rounded to ₹500</small></div>
+        <span></span><div class="inr" style="width:110px">
+          <input type="number" id="s-adv" value="${c.advance_pct ?? 30}" min="0" max="100" step="5"></div>
+      </div></div></section>`;
+}
+
+function openSettings(){ draft = clone(cat());
+  $('set-title').textContent = (cat().label || 'Session') + ' · prices & settings';
+  if (isAla()) { renderAlaSettings(); } else renderSettings(); $('settings').hidden = false; $('builder').hidden = true; $('s-toast').textContent=''; window.scrollTo(0,0); }
 function closeSettings(){ $('settings').hidden = true; $('builder').hidden = false; draft = null; }
 
 $('set-body').addEventListener('input', e => {
@@ -1079,6 +1136,15 @@ $('set-body').addEventListener('input', e => {
   if (t.dataset.cr){ const [c,k] = t.dataset.cr.split('|'); const p = draft.packages.find(x => x.code===c); [...p.includes, ...p.deliverables].find(x => x.k===k).credit_inr = n; }
   if (t.dataset.ad){ draft.addons.find(a => a.code===t.dataset.ad).unit_inr = n ?? 0; }
   if (t.id === 's-adv'){ draft.advance_pct = Math.min(100, n ?? 0); }
+  if (t.dataset.ala){
+    const [what, code] = t.dataset.ala.split('|');
+    const items = (draft.groups || []).flatMap(g => g.items);
+    if (what === 'item'){ const it = items.find(x => x.code === code); if (it) it.unit_inr = n ?? 0; }
+    if (what === 'cap'){ const it = items.find(x => x.code === code); if (it) it.cap_inr = n ?? null; }
+    if (what === 'pct'){ const m = (draft.modifiers || []).find(x => x.code === code);
+      if (m) m.pct = Number(t.value) || 0; }
+    if (what === 'vol'){ draft.volume = draft.volume || {}; draft.volume[code] = n ?? 0; }
+  }
 });
 $('set-body').addEventListener('change', e => {
   const t = e.target.closest('[data-rmv]'); if (!t) return;
@@ -1089,16 +1155,25 @@ $('set-body').addEventListener('change', e => {
 $('b-settings').addEventListener('click', openSettings);
 $('s-cancel').addEventListener('click', closeSettings);
 $('s-save').addEventListener('click', async e => {
-  const bad = draft.packages.find(p => p.offer_inr > p.mrp_inr);
-  if (bad){ $('s-toast').textContent = `${bad.name}: the offer price is higher than the full price. Fix it before saving.`; return; }
+  /* the package screen has a rule of its own; the line-by-line one does not */
+  if (!isAla()){
+    const bad = draft.packages.find(p => p.offer_inr > p.mrp_inr);
+    if (bad){ $('s-toast').textContent = `${bad.name}: the offer price is higher than the full price. Fix it before saving.`; return; }
+  }
+  const key = CFG_KEY_FOR[state.category] || CFG_KEY;
   const b = e.currentTarget; b.disabled = true;
   try {
     const at = new Date().toISOString();
     const { data, error } = await sb.from('settings')
-      .upsert({ key: CFG_KEY, value: JSON.stringify({ category: draft, updated_at: at }), note: 'Quote builder prices (maternity). Edited from Quotes > Prices & settings.' })
+      .upsert({ key, value: JSON.stringify({ category: draft, updated_at: at }),
+                note: 'Quote builder prices (' + state.category + '). Edited from Quotes > Prices & settings.' })
       .select('key');
     if (error || !data || !data.length) throw error || new Error('refused');
-    applyCategory(draft); showSaved(at); closeSettings(); toast('Prices saved. The whole team now quotes with them.');
+    /* put the saved prices straight back into the page being used */
+    CAT.categories[state.category] = clone(draft);
+    applyCategoryUI(); render();
+    showSaved(at); closeSettings();
+    toast('Prices saved. The whole team now quotes ' + (cat().label || '') + ' with them.');
   } catch(err){
     $('s-toast').textContent = 'Could not save. Only admins can change prices; if you are one, check your connection and try again.';
   } finally { b.disabled = false; }
