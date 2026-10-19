@@ -360,6 +360,9 @@ CAT.categories.sitter = {
       {code:'frame_24x36', label:'Frame 24×36', unit_inr:4000, kind:'qty', max:10}
     ]}
   ],
+  /* a volume discount, read off what was actually ordered: nothing under
+     20,000, then 1,000 off for every full 10,000 */
+  volume:{from_inr:20000, step_inr:10000, per_step_inr:1000, label:'Large order discount'},
   modifiers:[
     {code:'twin', label:'Twin handling', sub:'Adds 20% to everything above', pct:20},
     {code:'marketing', label:'Marketing discount', sub:'Client lets us share their images – takes 10% off, applied last', pct:-10, social:true}
@@ -484,6 +487,21 @@ function buildAlaCarte(catalogue, c, s){
     running += amt;
   });
 
+  /* The band comes off what they ordered, so twin handling cannot lift a small
+     order into a discount and the marketing discount cannot drop a big one out. */
+  const vol = c.volume;
+  let volumeOff = 0;
+  if (vol && itemsTotal >= (vol.from_inr ?? Infinity)) {
+    volumeOff = Math.floor(itemsTotal / (vol.step_inr || 10000)) * (vol.per_step_inr || 1000);
+    if (volumeOff > 0) {
+      volumeOff = Math.min(volumeOff, running);
+      lines.push({code:'volume', kind:'modifier',
+                  label:(vol.label || 'Large order discount') + ' (' + inr(itemsTotal) + ' order)',
+                  qty:1, unit_inr:-volumeOff, total_inr:-volumeOff});
+      running -= volumeOff;
+    }
+  }
+
   const subtotal = running;
   const discount = Math.min(Math.max(0, Number(s.discount_inr)||0), subtotal);
   const total = Math.max(0, subtotal - discount);
@@ -496,6 +514,7 @@ function buildAlaCarte(catalogue, c, s){
     social_permission:s.social, outdoor:s.outdoor,
     lines, items_total_inr:itemsTotal, subtotal_inr:subtotal, discount_inr:discount, total_inr:total,
     deliverables: alaDeliverables(lines, edited, !!s.qty.unedited && uneditedTotal > 0, uneditedSetups),
+    volume_discount_inr: volumeOff,
     edited_images:edited, unedited_included: !!s.qty.unedited && uneditedTotal > 0,
     social_shared: (c.modifiers||[]).some(m => m.social && s.mods[m.code]),
     offer_saving_inr:0, advance_inr:advance, balance_inr:total-advance
