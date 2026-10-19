@@ -160,10 +160,12 @@ function canSee(v) {
   if (v === "files") return myMods().some(m => m === "del" || m === "print");
   /* posting is marketing's job, but post-production picks what is worth it */
   if (v === "social") return myMods().some(m => m === "life" || m === "post");
+  /* everyone has their own page and their own task list */
+  if (v === "me" || v === "tasks") return true;
   if (v === "dash" || v === "sla" || v === "team") return false;
   return true;
 }
-const firstAllowed = () => ["dash", ...BOARDS, "life", "social", "pay", "files"].find(canSee) || "noaccess";
+const firstAllowed = () => ["me", "dash", ...BOARDS, "life", "social", "pay", "files"].find(canSee) || "noaccess";
 
 /* ---- who picks a job up when it lands on a stage ---- */
 /* Bangalore is its own world; everywhere else shares a team. The database
@@ -181,6 +183,45 @@ const ruleOwner = (stage, grp) => {
 };
 /* a stage is either split by location or not - never half of each */
 const ruleSplit = stage => !!ruleFor(stage, "bangalore") || !!ruleFor(stage, "cbe_erode");
+
+/* ---- ad-hoc tasks ---- */
+const myTasks = () => (S.tasks || []).filter(t => t.assignee_id === (S.me || {}).id && t.status === "open");
+const openTasks = () => (S.tasks || []).filter(t => t.status === "open");
+const lateTasks = () => openTasks().filter(t => t.due_state === "OVERDUE");
+const tasksForJob = id => (S.tasks || []).filter(t => t.job_id === id);
+/* an admin is who the chores are for, not who they are given to */
+const assignableTo = () => S.people.filter(p => p.active && !p.is_admin);
+
+/* ---- the one next thing each job is waiting on ---- */
+/* Reuses the gates the Move button already enforces, so the dashboard and the
+   drawer can never disagree about what is missing. */
+function nextAction(j) {
+  if (archived(j)) return null;
+  const to = nextStageFor(j);
+  if (!to) return null;
+  if (emailNeeded(j, to))        return "Add the client's email address";
+  const pk = packageNeeded(j, to);
+  if (pk)                        return "Fill in the package — " + pk.join(", ");
+  if (termsNeeded(j, to))        return "Email the terms and booking details";
+  const slot = slotNeeded(j, to);
+  if (slot === "firm")           return "Confirm the shoot date and time";
+  if (slot === "any")            return "Set a shoot date, or mark it TBD";
+  if (crewNeeded(j, to))         return "Assign a photographer and a stylist";
+  const ho = handoverNeeded(j, to);
+  if (ho)                        return "Hand the shoot over — " + ho.join(", ");
+  if (galleryLinkNeeded(j, to))  return "Add the Pixieset link for the unedited files";
+  if (shootQcNeeded(j, to))      return "Review the shoot and record the verdict";
+  if (selectionNeeded(j, to))    return "Chase the client for their selection";
+  if (editInfoNeeded(j, to))     return "Add the edited count and link";
+  if (crossing(j, to, "digital_stage") && j.post_photos == null)
+                                 return "Say whether the photos are worth posting";
+  if (editsApprovalNeeded(j, to))return "Send the photos for the client's approval";
+  const held = childBlocking2(j, to);
+  if (held)                      return "Waiting on the " + held;
+  if (payGateCrossed(j, to))     return "Collect " + rupee(bal(j)) + " before " + to;
+  return "Move it on to " + to;
+}
+const myJobs = () => pool().filter(j => j.owner_id === (S.me || {}).id);
 
 /* ---- what the studio still owes its own feed ---- */
 /* Three kinds of material come off one shoot. Each is listed on its own and
@@ -563,6 +604,8 @@ async function loadJobs() {
   if (c.error) throw c.error;
   S.jobs = j.data || [];
   S.children = c.data || [];
+  const tk = await sb.from("v_tasks").select("*").order("due_on");
+  S.tasks = tk.error ? [] : (tk.data || []);
 }
 /* which pre-production list this job uses, if any */
 const prepKindFor = j => {
@@ -895,7 +938,7 @@ const A = {
         <div><label>Advance received</label>
           <input class="inp" id="bkAdv" type="number" min="1" value="${num(j.amount_received) || ""}" placeholder="required"></div>
       </div>
-      <div style="margin-top:4px">${slotPicker("bk", j.shoot_at)}</div>
+      <div style="margin-top:4px" onchange="A.bkIdSync(${j.id})">${slotPicker("bk", j.shoot_at)}</div>
       <label style="margin-top:10px">Where is the shoot?</label>
       <select class="inp" id="bkVenue" onchange="A.venueSync()">
         ${VENUES.map(v => `<option ${v === (j.venue || "Studio") ? "selected" : ""}>${esc(v)}</option>`).join("")}
@@ -908,6 +951,11 @@ const A = {
       <select class="inp" id="bkMethod" onchange="A.paySync('bk')">
         ${PAY_METHODS.map(m => `<option>${esc(m)}</option>`).join("")}</select>
       ${proofFields("bk")}
+
+      <div class="slot set" id="bkIdBox" style="margin-top:12px">
+        <h6>Booking ID <b id="bkId" style="font-family:ui-monospace,Menlo,monospace">…</b></h6>
+        <p>Issued when you confirm. It follows the branch and the shoot date, so it
+          changes if either of those changes above.</p></div>
 
       <label style="margin-top:12px">Who booked it?</label>
       <select class="inp" id="bkBy">
@@ -923,11 +971,21 @@ const A = {
         <button class="btn" onclick="A.closeModal()">Cancel</button></div>
       <p class="hint">An advance is required to book. The date can be TBD for now, but must be confirmed
         before ${esc(S.settings.shoot_date_from || "Pre-Production")}.</p>`);
-    A.venueSync(); A.paySync("bk");
+    A.venueSync(); A.paySync("bk"); A.bkIdSync(id);
   },
   venueSync() {
     const v = $("bkVenue"), box = $("bkAddrBox");
     if (v && box) box.style.display = v.value === "Studio" ? "none" : "";
+  },
+  /* the preview has to follow the fields it is built from */
+  async bkIdSync(id) {
+    const j = S.jobs.find(x => x.id === id);
+    const el = $("bkId");
+    if (!el) return;
+    const at = slotValue("bk") || j.shoot_at || new Date().toISOString();
+    const { data, error } = await sb.rpc("booking_id_preview",
+      { p_location: j.location, p_shoot_at: at });
+    el.textContent = error ? "will be issued on confirm" : data;
   },
   async saveBooking(id, to, tbd) {
     const j = S.jobs.find(x => x.id === id);
@@ -969,6 +1027,9 @@ const A = {
     if (tbd) { f.shoot_tbd = true; f.shoot_at = null; }
     else { f.shoot_at = at; f.shoot_tbd = false; }
     await patch(id, f, "Booked" + (tbd ? " — date TBD" : " for " + fmtShoot(f.shoot_at)));
+    /* the reference is theirs the moment the booking is real */
+    const { data: bid } = await sb.rpc("issue_booking_id", { p_job: id });
+    if (bid) { await loadJobs(); render(); toast("Booking ID " + bid); }
     /* the date is theirs now — tell them, and send the guide with it */
     const after = S.jobs.find(x => x.id === id);
     if (after && after.email && after.stage === to) await A.mailBooking(id);
@@ -1715,6 +1776,103 @@ const A = {
     render();
   },
 
+  /* ---- ad-hoc tasks ---- */
+  newTask(jobId) {
+    const j = jobId ? S.jobs.find(x => x.id === jobId) : null;
+    const people = assignableTo();
+    if (!people.length) return toast("There is nobody who can be given a task", true);
+    const soon = new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10);
+    modal(`<h3>New task</h3>
+      ${j ? `<p class="mh">On ${esc(j.client_name)} · ${esc(j.shoot_type)}</p>` : ""}
+      <label>What needs doing?</label>
+      <input class="inp" id="tkTitle" placeholder="e.g. Order flokati wraps">
+      <label style="margin-top:10px">Any detail <span class="opt">optional</span></label>
+      <textarea class="inp" id="tkDetail" rows="2"
+        placeholder="Anything the person needs to know"></textarea>
+      <div class="f2" style="margin-top:10px">
+        <div><label>Who is it for?</label>
+          <select class="inp" id="tkWho">
+            ${people.map(p => `<option value="${esc(p.id)}">${esc(p.full_name)}</option>`).join("")}
+          </select></div>
+        <div><label>Finish by</label>
+          <input class="inp" id="tkDue" type="date" value="${soon}"></div>
+      </div>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveTask(${jobId || "null"})">Create it</button>
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      <p class="hint">Everyone can see every task. Admins cannot be given one.</p>`);
+  },
+  async saveTask(jobId) {
+    const title = $("tkTitle").value.trim();
+    const detail = $("tkDetail").value.trim();
+    const who = $("tkWho").value;
+    const due = $("tkDue").value;
+    if (!title) return toast("Say what needs doing", true);
+    if (!due) return toast("Pick a date it should be finished by", true);
+    A.closeModal();
+    const { error } = await sb.from("tasks").insert({
+      title, detail: detail || null, assignee_id: who, due_on: due,
+      created_by: S.me.id, job_id: jobId || null
+    });
+    if (error) return fail(error);
+    await refresh("Task created");
+  },
+  editTask(id) {
+    const t = (S.tasks || []).find(x => x.id === id);
+    if (!t) return;
+    const people = assignableTo();
+    modal(`<h3>Task</h3>
+      <p class="mh">${esc(t.created_by_name || "Someone")} asked for this${t.job_client
+        ? " · " + esc(t.job_client) : ""}</p>
+      <label>What needs doing?</label>
+      <input class="inp" id="tkTitle" value="${esc(t.title)}">
+      <label style="margin-top:10px">Any detail <span class="opt">optional</span></label>
+      <textarea class="inp" id="tkDetail" rows="2">${esc(t.detail || "")}</textarea>
+      <div class="f2" style="margin-top:10px">
+        <div><label>Who is it for?</label>
+          <select class="inp" id="tkWho">
+            ${people.map(p => `<option value="${esc(p.id)}"
+              ${p.id === t.assignee_id ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}
+          </select></div>
+        <div><label>Finish by</label>
+          <input class="inp" id="tkDue" type="date" value="${esc(t.due_on)}"></div>
+      </div>
+      <div class="acts" style="margin-top:16px">
+        <button class="btn p" onclick="A.saveTaskEdit(${id})">Save</button>
+        ${t.status === "open"
+          ? `<button class="btn" onclick="A.closeTask(${id})">Mark it done</button>`
+          : `<button class="btn" onclick="A.reopenTask(${id})">Reopen it</button>`}
+        <button class="btn" onclick="A.closeModal()">Cancel</button></div>
+      ${t.status === "done" ? `<p class="hint">Finished ${when(t.done_at)}${t.done_by_name
+        ? " by " + esc(t.done_by_name) : ""}.</p>` : ""}`);
+  },
+  async saveTaskEdit(id) {
+    const title = $("tkTitle").value.trim();
+    const detail = $("tkDetail").value.trim();
+    const who = $("tkWho").value, due = $("tkDue").value;
+    if (!title) return toast("Say what needs doing", true);
+    if (!due) return toast("Pick a date it should be finished by", true);
+    A.closeModal();
+    const { error } = await sb.from("tasks")
+      .update({ title, detail: detail || null, assignee_id: who, due_on: due }).eq("id", id);
+    if (error) return fail(error);
+    await refresh("Task updated");
+  },
+  async closeTask(id) {
+    A.closeModal();
+    const { error } = await sb.from("tasks")
+      .update({ status: "done", done_by: S.me.id }).eq("id", id);
+    if (error) return fail(error);
+    await refresh("Task closed");
+  },
+  async reopenTask(id) {
+    A.closeModal();
+    const { error } = await sb.from("tasks").update({ status: "open" }).eq("id", id);
+    if (error) return fail(error);
+    await refresh("Task reopened");
+  },
+  taskFilter(v) { S.taskView = v; render(); },
+
   /* ---- is this worth putting out? ---- */
   askPost(id, kind, thenStage, childId) {
     const j = S.jobs.find(x => x.id === id);
@@ -1928,6 +2086,14 @@ const A = {
           placeholder="Where the footage went">`
       : `<p class="hint" style="margin-top:8px">No video in this package, so nothing to record for it.</p>`}
 
+      <p class="shead">On the day</p>
+      <div class="f2">
+        <div><label>Client reported at</label>
+          <input class="inp" id="hoIn" type="time" value="${esc(j.client_in_time || "")}"></div>
+        <div><label>Client left at</label>
+          <input class="inp" id="hoOut" type="time" value="${esc(j.client_out_time || "")}"></div>
+      </div>
+
       <p class="shead">How the day went</p>
       <label>How happy was the client?</label>
       <select class="inp" id="hoSat">
@@ -2040,6 +2206,7 @@ const A = {
        further down - after closeModal has torn the form out of the DOM - is
        how "who booked it" silently went missing once already. */
     const bts = v("hoBts"), editFb = v("hoEditFb");
+    const inAt = v("hoIn"), outAt = v("hoOut");
     const grEl = $("hoGrYes");
     const gr = grEl ? (grEl.classList.contains("on") ? true
                      : ($("hoGrNo").classList.contains("on") ? false : null)) : null;
@@ -2093,6 +2260,8 @@ const A = {
       video_files: j.has_video && vidFiles ? vidFiles : null,
       video_backup_link: j.has_video ? (vidBackup || null) : null,
       client_satisfaction: sat || null,
+      client_in_time: inAt || null,
+      client_out_time: outAt || null,
       google_review: gr,
       google_review_link: gr === true ? (grLink || null) : null,
       edit_feedback: editFb || null,

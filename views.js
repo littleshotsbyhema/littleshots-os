@@ -73,6 +73,10 @@ function tab(key, label, count, bad) {
 }
 function tabs() {
   let h = "";
+  /* your own page comes first - it is what you open the app for */
+  const mine = myJobs().length + myTasks().length;
+  h += tab("me", "My work", mine || "", lateTasks().some(t => t.assignee_id === (S.me||{}).id));
+  h += tab("tasks", "Tasks", openTasks().length || "", lateTasks().length);
   if (canSee("dash")) h += tab("dash", "Dashboard");
   if (canSee("crm")) {
     const chase = chaseList().length;
@@ -108,12 +112,96 @@ function viewHTML() {
     case "archive": return archiveView();
     case "files": return filesView();
     case "social": return socialView();
+    case "me": return meView();
+    case "tasks": return tasksView();
     case "noaccess": return `<div class="head"><h1>No access yet</h1></div>
       <p class="sub">No pipelines have been assigned to you. An admin can fix that in Team.</p>`;
     default: return boardView(S.view);
   }
 }
 const locTag = () => S.loc === "All" ? "" : `<span class="tag grey">${esc(S.loc)}</span>`;
+
+/* --------------------------------------------------- my work */
+/* What this person has to do today, in one place: the jobs that sit in their
+   name with the one thing each is waiting on, then their own tasks. */
+function meView() {
+  const jobs = myJobs(), tasks = myTasks();
+  const late = jobs.filter(j => j.sla_status === "OVERDUE");
+  const name = (S.me && S.me.full_name) || "you";
+  const taskRow = t => `<tr onclick="A.editTask(${t.id})" style="cursor:pointer">
+      <td><b>${esc(t.title)}</b>${t.job_client
+        ? `<br><span style="color:var(--ink-soft);font-size:12px">${esc(t.job_client)}</span>` : ""}</td>
+      <td>${t.due_state === "OVERDUE" ? `<span class="pill red">overdue</span>`
+          : t.due_state === "Due today" ? `<span class="pill amber">today</span>`
+          : esc(t.due_on)}</td>
+      <td style="color:var(--ink-soft);font-size:12px">${esc(t.created_by_name || "")}</td></tr>`;
+  const jobRow = j => `<tr onclick="A.openJob(${j.id})" style="cursor:pointer">
+      <td><b>${esc(j.client_name)}</b><br>
+        <span style="color:var(--ink-soft);font-size:12px">${esc(j.shoot_type)}${
+          j.shoot_at ? " · " + when(j.shoot_at) : ""}</span></td>
+      <td><span class="pill ${slaPill(j)}">${esc(j.stage)}</span></td>
+      <td>${esc(nextAction(j) || "Nothing outstanding")}</td></tr>`;
+  return `<div class="head"><h1>My work</h1>${locTag()}
+      <span class="tag">${jobs.length} job${jobs.length === 1 ? "" : "s"}</span>
+      ${tasks.length ? `<span class="tag">${tasks.length} task${tasks.length === 1 ? "" : "s"}</span>` : ""}
+      ${late.length ? `<span class="tag red">${late.length} past SLA</span>` : ""}</div>
+    <p class="sub">Everything in ${esc(name)}'s name, and what each one is waiting on.</p>
+    <div class="acts" style="margin-bottom:12px">
+      <button class="btn p sm" onclick="A.newTask(null)">+ New task</button></div>
+
+    <div class="panel"><h3>Jobs in my name</h3>
+      <p class="ph">The next thing each one needs. Click a row to open it.</p>
+      ${jobs.length ? `<table><thead><tr><th>Client</th><th>Stage</th><th>Next action</th></tr></thead>
+        <tbody>${jobs.slice().sort((a, b) =>
+          num(b.days_in_stage) - num(a.days_in_stage)).map(jobRow).join("")}</tbody></table>`
+        : `<div class="empty">Nothing is assigned to you right now</div>`}</div>
+
+    <div class="panel"><h3>My tasks</h3>
+      <p class="ph">Open tasks someone has given you. Click one to update or close it.</p>
+      ${tasks.length ? `<table><thead><tr><th>Task</th><th>Finish by</th><th>From</th></tr></thead>
+        <tbody>${tasks.map(taskRow).join("")}</tbody></table>`
+        : `<div class="empty">No open tasks</div>`}</div>`;
+}
+
+/* ------------------------------------------------------- tasks */
+function tasksView() {
+  const view = S.taskView || "mine";
+  const all = S.tasks || [];
+  const rows = view === "mine" ? all.filter(t => t.assignee_id === (S.me||{}).id && t.status === "open")
+             : view === "late" ? all.filter(t => t.status === "open" && t.due_state === "OVERDUE")
+             : view === "done" ? all.filter(t => t.status === "done")
+             : all.filter(t => t.status === "open");
+  const pill = v => `<button class="${view === v ? "on" : ""}"
+      aria-pressed="${view === v}" onclick="A.taskFilter('${v}')">`;
+  const row = t => `<tr onclick="A.editTask(${t.id})" style="cursor:pointer">
+      <td><b>${esc(t.title)}</b>${t.detail
+        ? `<br><span style="color:var(--ink-soft);font-size:12px">${esc(t.detail)}</span>` : ""}</td>
+      <td>${esc(t.assignee_name || "—")}</td>
+      <td>${t.status === "done" ? `<span class="pill green">done</span>`
+          : t.due_state === "OVERDUE" ? `<span class="pill red">overdue</span>`
+          : t.due_state === "Due today" ? `<span class="pill amber">today</span>`
+          : esc(t.due_on)}</td>
+      <td>${t.job_client
+        ? `<span style="color:var(--ink-soft);font-size:12px">${esc(t.job_client)}</span>` : ""}</td>
+      <td style="color:var(--ink-soft);font-size:12px">${esc(t.created_by_name || "")}</td></tr>`;
+  return `<div class="head"><h1>Tasks</h1>${locTag()}
+      <span class="tag">${openTasks().length} open</span>
+      ${lateTasks().length ? `<span class="tag red">${lateTasks().length} overdue</span>` : ""}</div>
+    <p class="sub">Anything the studio needs doing that is not a shoot. Everyone sees them all.</p>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+      <div class="modeswitch">
+        ${pill("mine")}Mine</button>
+        ${pill("open")}All open</button>
+        ${pill("late")}Overdue</button>
+        ${pill("done")}Done</button>
+      </div>
+      <button class="btn p sm" onclick="A.newTask(null)">+ New task</button>
+    </div>
+    ${rows.length ? `<div class="panel"><table>
+      <thead><tr><th>Task</th><th>For</th><th>Finish by</th><th>Job</th><th>From</th></tr></thead>
+      <tbody>${rows.map(row).join("")}</tbody></table></div>`
+      : `<div class="empty">Nothing here</div>`}`;
+}
 
 /* ------------------------------------------------ post to social */
 /* One row per piece of material, not per job. Ticking it posted is what
@@ -579,6 +667,7 @@ function jobBody(j, notes, acts) {
     ${paySection(j, b, gate)}
     ${accessSection(j, b)}
     ${closedSection(j)}
+    ${jobTasksSection(j)}
     ${detailSection(j)}
     ${activitySection(acts)}
     <details class="journey"><summary>Journey</summary><div>${stepper(j)}</div></details>`;
@@ -710,6 +799,10 @@ function handoverSection(j) {
           : "")}
         ${row("BTS", j.bts_backup_link
           ? `<a href="${esc(j.bts_backup_link)}" target="_blank" rel="noopener">backup link</a>` : "")}
+        ${row("At the studio", j.client_in_time
+          ? esc(String(j.client_in_time).slice(0,5)) +
+            (j.client_out_time ? " to " + esc(String(j.client_out_time).slice(0,5)) : " — no leaving time")
+          : "")}
         ${row("Client", sat ? `<span class="pill ${happy ? "green" : "amber"}">${esc(sat)}</span>` : "")}
         ${row("Google review", j.google_review === true
           ? `<span class="pill green">left one</span>${j.google_review_link
@@ -1347,6 +1440,27 @@ function paymentsList(j) {
   </div>`;
 }
 
+/* Anything somebody has been asked to do about this particular client. */
+function jobTasksSection(j) {
+  if (archived(j)) return "";
+  const rows = tasksForJob(j.id);
+  const open = rows.filter(t => t.status === "open");
+  return `<div class="sec"><h5>Tasks</h5>
+    ${rows.length ? rows.map(t => `<div class="slot ${t.status === "done" ? "set"
+        : t.due_state === "OVERDUE" ? "missing" : ""}" style="cursor:pointer"
+        onclick="A.editTask(${t.id})">
+        <h6>${t.status === "done" ? "\u2713 " : ""}${esc(t.title)}</h6>
+        <p>${esc(t.assignee_name || "unassigned")}${t.status === "done"
+          ? " · done " + when(t.done_at)
+          : t.due_state === "OVERDUE" ? " · <b>overdue</b> since " + esc(t.due_on)
+          : " · by " + esc(t.due_on)}</p></div>`).join("")
+      : `<div class="slot"><h6>Nothing outstanding</h6>
+         <p>No one has been asked to do anything on this job.</p></div>`}
+    <div class="acts" style="margin-top:10px">
+      <button class="btn ${open.length ? "sm" : "p sm"}" onclick="A.newTask(${j.id})">
+        Add a task</button></div></div>`;
+}
+
 /* The job is finished. The only thing that can still be owed to the client
    here is the thank-you, so that is all this shows. */
 function closedSection(j) {
@@ -1425,6 +1539,7 @@ function detailSection(j) {
     ${j.backup_location || num(j.files_shot) ? `<dt>Shoot files</dt><dd>${num(j.files_shot)
         ? j.files_shot + " files" : "count not recorded"}${j.backup_location
         ? ' <span style="color:var(--ink-soft)">· ' + esc(j.backup_location) + "</span>" : ""}</dd>` : ""}
+    ${j.booking_id ? `<dt>Booking ID</dt><dd style="font-family:ui-monospace,Menlo,monospace">${esc(j.booking_id)}</dd>` : ""}
     <dt>Days in stage</dt><dd>${j.days_in_stage}${j.sla_days == null ? " · no SLA" : " of " + j.sla_days + " allowed"}</dd>
     <dt>Stage owner</dt><dd>${esc(j.stage_responsible)}</dd>
     <dt>Assigned to</dt><dd><select class="inp" onchange="A.reassign(${j.id},this.value)">
