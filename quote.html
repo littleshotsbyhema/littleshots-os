@@ -218,15 +218,15 @@ details.dev pre{background:var(--surface);border:1px solid var(--line);border-ra
       </section>
 
       <section class="block">
-        <p class="eyebrow">Offer price eligibility</p>
+        <p class="eyebrow" id="elig-head">Offer price eligibility</p>
         <div class="rows">
-          <div class="row">
+          <div class="row" data-pkgonly>
             <div class="lbl">Client allows us to share images on social media<small>Required for the offer price</small></div>
             <span></span>
             <label class="switch"><input type="checkbox" id="t-social" aria-label="Social media permission"><span></span></label>
           </div>
           <div class="row">
-            <div class="lbl">Outdoor session upgrade<small>Offer price applies to studio sessions only. Park or location entry fees are paid by the client.</small></div>
+            <div class="lbl">Outdoor session upgrade<small id="outdoor-hint">Offer price applies to studio sessions only. Park or location entry fees are paid by the client.</small></div>
             <div class="inr" id="outdoor-wrap"><input type="number" id="outdoor-amt" min="0" step="500" aria-label="Outdoor travel and convenience charge"></div>
             <label class="switch"><input type="checkbox" id="t-outdoor" aria-label="Outdoor session"><span></span></label>
           </div>
@@ -346,7 +346,7 @@ CAT.categories.sitter = {
       {code:'extra_family_member', label:'Additional family member', sub:'Per member', unit_inr:1000, kind:'qty', max:10}
     ]},
     {name:'Deliverables', items:[
-      {code:'unedited', label:'Unedited files', sub:'Priced per setup – ₹1,500 a setup, ₹2,000 for a family session', kind:'derived_unedited'},
+      {code:'unedited', label:'Unedited files', sub:'₹1,500 a setup, ₹2,000 for a family session, capped at ₹4,000', kind:'derived_unedited', cap_inr:4000},
       {code:'extra_edited', label:'Additional edited image', sub:'Beyond what the setups include', unit_inr:500, kind:'qty', max:60, edited_each:1},
       {code:'reel_short', label:'Reel – 20 to 25 sec, one setup', unit_inr:6000, kind:'toggle'},
       {code:'reel_long', label:'Reel – 30 to 45 sec, two setups', unit_inr:10000, kind:'toggle'}
@@ -362,7 +362,7 @@ CAT.categories.sitter = {
   ],
   modifiers:[
     {code:'twin', label:'Twin handling', sub:'Adds 20% to everything above', pct:20},
-    {code:'marketing', label:'Social media permission', sub:'Client lets us share their images – takes 10% off, applied last', pct:-10, social:true}
+    {code:'marketing', label:'Marketing discount', sub:'Client lets us share their images – takes 10% off, applied last', pct:-10, social:true}
   ],
   terms:[
     'Advance payment confirms your booking slot. Dates are reserved only on confirmation.',
@@ -447,8 +447,10 @@ function buildAlaCarte(catalogue, c, s){
     edited += (Number(s.qty[it.code]) || 0) * it.edited_each;
   });
   /* unedited files are not a thing you count - they follow the setups */
-  const uneditedTotal = all.reduce((t, it) =>
+  const uneditedRaw = all.reduce((t, it) =>
     t + (it.unedited_inr ? (Number(s.qty[it.code]) || 0) * it.unedited_inr : 0), 0);
+  const uneditedCap = (all.find(it => it.kind === 'derived_unedited') || {}).cap_inr;
+  const uneditedTotal = uneditedCap ? Math.min(uneditedRaw, uneditedCap) : uneditedRaw;
   const uneditedSetups = all.reduce((t, it) =>
     t + (it.unedited_inr ? (Number(s.qty[it.code]) || 0) : 0), 0);
 
@@ -456,7 +458,8 @@ function buildAlaCarte(catalogue, c, s){
     if (it.kind === 'derived_unedited'){
       if (s.qty[it.code] && uneditedTotal > 0)
         lines.push({code:it.code, kind:'item', group:g.name,
-                    label:it.label + ' – all ' + uneditedSetups + ' setup' + (uneditedSetups===1?'':'s'),
+                    label:it.label + ' – all ' + uneditedSetups + ' setup' + (uneditedSetups===1?'':'s')
+                      + (uneditedCap && uneditedRaw > uneditedCap ? ' (capped)' : ''),
                     qty:1, unit_inr:uneditedTotal, total_inr:uneditedTotal});
       return;
     }
@@ -611,10 +614,14 @@ function renderSheet(q){
 }
 
 /* ---------- the line-by-line builder ---------- */
-/* what unedited files would cost for the setups currently chosen */
+/* what unedited files would cost for the setups currently chosen, never more
+   than the cap - a big session should not run the file charge away */
 function alaUnedited(){
-  return (cat().groups||[]).flatMap(g=>g.items).reduce((t,it) =>
+  const items = (cat().groups||[]).flatMap(g=>g.items);
+  const raw = items.reduce((t,it) =>
     t + (it.unedited_inr ? (Number(state.qty[it.code])||0) * it.unedited_inr : 0), 0);
+  const cap = (items.find(it => it.kind === 'derived_unedited') || {}).cap_inr;
+  return cap ? Math.min(raw, cap) : raw;
 }
 function renderAlaForm(){
   const c = cat();
@@ -659,9 +666,7 @@ function renderAla(){
   current = buildQuote(CAT, state);
   renderAlaForm();
   $('outdoor-wrap').style.visibility = state.outdoor ? 'visible' : 'hidden';
-  const el = $('elig');
-  el.className = 'notice';
-  el.textContent = `${cat().label || 'These'} sessions are quoted line by line, so there is no separate offer price.`;
+
   if (state.advance_inr == null) $('advance').value = current.advance_inr;
   $('adv-hint').textContent = state.advance_inr == null
     ? `Pre-filled at ${cat().advance_pct ?? 30}% of the total. Type to override.`
@@ -805,6 +810,14 @@ function setCategory(name){
   state.quote_no = 'LSH-' + pre + '-' + iso(today).slice(2).replace(/-/g,'') + '-' +
     String(today.getHours()).padStart(2,'0') + String(today.getMinutes()).padStart(2,'0');
   document.querySelectorAll('[data-pkgonly]').forEach(el => { el.style.display = isAla() ? 'none' : ''; });
+  /* there is no offer price to be eligible for when it is priced line by line;
+     sharing permission is the marketing discount instead */
+  $('elig-head').textContent = isAla() ? 'Session options' : 'Offer price eligibility';
+  $('outdoor-hint').textContent = isAla()
+    ? 'Park or location entry fees are paid by the client.'
+    : 'Offer price applies to studio sessions only. Park or location entry fees are paid by the client.';
+  /* the eligibility notice is about offer pricing, which does not exist here */
+  $('elig').style.display = isAla() ? 'none' : '';
   $('ala').style.display = isAla() ? '' : 'none';
   document.querySelectorAll('.cats .cat').forEach(b =>
     b.setAttribute('aria-pressed', b.id === 'cat-' + name));
