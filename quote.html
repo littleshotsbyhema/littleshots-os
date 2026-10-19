@@ -318,7 +318,7 @@ const niceDate = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN',{
 const state = {
   category:'maternity',
   client:{name:'', phone:'', shoot_date:iso(new Date(today.getTime()+21*864e5)), weeks:'', note:''},
-  package:'gold',
+  package:'gold',          // only still read by the retired package renderer
   social:true, outdoor:false, outdoor_inr:0,
   addons:{},
   qty:{},                   // à-la-carte: {itemCode: how many}
@@ -393,6 +393,51 @@ CAT.categories.newborn = (() => {
   return c;
 })();
 
+/* Maternity is quoted line by line too: a look is the unit, and every look
+   includes 10 edited images. There are no packages any more. */
+CAT.categories.maternity = {
+  mode:'alacarte', label:'Maternity', advance_pct:30,
+  volume:{from_inr:20000, step_inr:10000, per_step_inr:1000, label:'Large order discount'},
+  groups:[
+    {name:'Looks', items:[
+      {code:'look_backdrop',    label:'IN Backdrop',             unit_inr:10000, kind:'qty', max:10, edited_each:10, unedited_inr:2000},
+      {code:'look_boho',        label:'In Boho theme',           unit_inr:11000, kind:'qty', max:10, edited_each:10, unedited_inr:2000},
+      {code:'look_standard',    label:'Standard setup',          unit_inr:11000, kind:'qty', max:10, edited_each:10, unedited_inr:2000},
+      {code:'look_saree',       label:'Saree based setup',       unit_inr:12500, kind:'qty', max:10, edited_each:10, unedited_inr:2000},
+      {code:'look_flowers',     label:'Fresh flower based setup',unit_inr:15000, kind:'qty', max:10, edited_each:10, unedited_inr:2000},
+      {code:'look_western',     label:'Client Western outfit',   unit_inr:8000,  kind:'qty', max:10, edited_each:10, unedited_inr:2000},
+      {code:'look_drape',       label:'Drape look',              unit_inr:6000,  kind:'qty', max:10, edited_each:10, unedited_inr:2000}
+    ]},
+    {name:'Makeup & styling', items:[
+      {code:'makeup_look',      label:'Makeup – one look',       unit_inr:4000, kind:'qty', max:5},
+      {code:'extra_hairstyle',  label:'Additional hairstyle',    unit_inr:1500, kind:'qty', max:5},
+      {code:'extra_draping',    label:'Additional saree draping',unit_inr:1000, kind:'qty', max:5}
+    ]},
+    {name:'Deliverables', items:[
+      {code:'unedited', label:'Unedited files', sub:'₹2,000 a look, capped at ₹5,000',
+       kind:'derived_unedited', cap_inr:5000, unit_label:'look'},
+      {code:'extra_edited', label:'Additional edited image', sub:'Beyond what the looks include',
+       unit_inr:500, kind:'qty', max:60, edited_each:1},
+      {code:'reel_short', label:'Reel – 20 to 25 sec, one setup',  unit_inr:6000,  kind:'toggle'},
+      {code:'reel_long',  label:'Reel – 30 to 45 sec, two setups', unit_inr:10000, kind:'toggle'}
+    ]},
+    {name:'Prints', items:[
+      {code:'album_9x11_10', label:'Album 9×11, 10 sheets', unit_inr:5000, kind:'qty', max:5},
+      {code:'album_9x11_15', label:'Album 9×11, 15 sheets', unit_inr:6000, kind:'qty', max:5},
+      {code:'frame_8x12',  label:'Frame 8×12',  unit_inr:1000, kind:'qty', max:10},
+      {code:'frame_12x18', label:'Frame 12×18', unit_inr:1500, kind:'qty', max:10},
+      {code:'frame_16x24', label:'Frame 16×24', unit_inr:2500, kind:'qty', max:10},
+      {code:'frame_24x36', label:'Frame 24×36', unit_inr:4000, kind:'qty', max:10}
+    ]}
+  ],
+  /* no twin handling here - that exists for twin babies */
+  modifiers:[
+    {code:'marketing', label:'Marketing discount',
+     sub:'Client lets us share their images – takes 10% off, applied last', pct:-10, social:true}
+  ],
+  terms: CAT.categories.sitter.terms.slice()
+};
+
 const cat = () => CAT.categories[state.category];
 const isAla = () => cat().mode === 'alacarte';
 const pkg = () => cat().packages.find(p => p.code === state.package);
@@ -459,11 +504,14 @@ function buildAlaCarte(catalogue, c, s){
 
   (c.groups || []).forEach(g => (g.items || []).forEach(it => {
     if (it.kind === 'derived_unedited'){
-      if (s.qty[it.code] && uneditedTotal > 0)
+      if (s.qty[it.code] && uneditedTotal > 0){
+        /* maternity sells looks, the baby categories sell setups */
+        const unit = it.unit_label || 'setup';
         lines.push({code:it.code, kind:'item', group:g.name,
-                    label:it.label + ' – all ' + uneditedSetups + ' setup' + (uneditedSetups===1?'':'s')
+                    label:it.label + ' – all ' + uneditedSetups + ' ' + unit + (uneditedSetups===1?'':'s')
                       + (uneditedCap && uneditedRaw > uneditedCap ? ' (capped)' : ''),
                     qty:1, unit_inr:uneditedTotal, total_inr:uneditedTotal});
+      }
       return;
     }
     const q = it.kind === 'toggle' ? (s.qty[it.code] ? 1 : 0) : (Number(s.qty[it.code]) || 0);
@@ -513,7 +561,8 @@ function buildAlaCarte(catalogue, c, s){
     package_id:null, package_code:null, customised:false, removed_items:[], pricing:'list',
     social_permission:s.social, outdoor:s.outdoor,
     lines, items_total_inr:itemsTotal, subtotal_inr:subtotal, discount_inr:discount, total_inr:total,
-    deliverables: alaDeliverables(lines, edited, !!s.qty.unedited && uneditedTotal > 0, uneditedSetups),
+    deliverables: alaDeliverables(lines, edited, !!s.qty.unedited && uneditedTotal > 0, uneditedSetups,
+      (all.find(it => it.kind === 'derived_unedited') || {}).unit_label || 'setup'),
     volume_discount_inr: volumeOff,
     edited_images:edited, unedited_included: !!s.qty.unedited && uneditedTotal > 0,
     social_shared: (c.modifiers||[]).some(m => m.social && s.mods[m.code]),
@@ -522,10 +571,11 @@ function buildAlaCarte(catalogue, c, s){
 }
 /* Everything the client goes home with, in the order they care about. Prints
    and films only appear once they are actually on the quote. */
-function alaDeliverables(lines, edited, uneditedOn, setups){
+function alaDeliverables(lines, edited, uneditedOn, setups, unit){
   const out = [];
   if (edited) out.push(edited + ' premium edited image' + (edited===1?'':'s'));
-  if (uneditedOn) out.push('All unedited files from your ' + setups + ' setup' + (setups===1?'':'s'));
+  if (uneditedOn) out.push('All unedited files from your ' + setups + ' ' +
+    (unit || 'setup') + (setups===1?'':'s'));
   /* the preview gallery is how they choose when they are not getting everything */
   else out.push('Watermarked preview gallery to choose from');
   lines.filter(l => /^reel/.test(l.code)).forEach(l => out.push(l.label.replace(/^Reel – /, 'Reel, ')));
@@ -828,20 +878,25 @@ function setCategory(name){
   const pre = {maternity:'MAT', newborn:'NB', sitter:'SIT'}[name] || name.slice(0,3).toUpperCase();
   state.quote_no = 'LSH-' + pre + '-' + iso(today).slice(2).replace(/-/g,'') + '-' +
     String(today.getHours()).padStart(2,'0') + String(today.getMinutes()).padStart(2,'0');
-  document.querySelectorAll('[data-pkgonly]').forEach(el => { el.style.display = isAla() ? 'none' : ''; });
-  /* there is no offer price to be eligible for when it is priced line by line;
-     sharing permission is the marketing discount instead */
-  $('elig-head').textContent = isAla() ? 'Session options' : 'Offer price eligibility';
-  $('outdoor-hint').textContent = isAla()
-    ? 'Park or location entry fees are paid by the client.'
-    : 'Offer price applies to studio sessions only. Park or location entry fees are paid by the client.';
-  /* the eligibility notice is about offer pricing, which does not exist here */
-  $('elig').style.display = isAla() ? 'none' : '';
-  $('ala').style.display = isAla() ? '' : 'none';
+  applyCategoryUI();
   document.querySelectorAll('.cats .cat').forEach(b =>
     b.setAttribute('aria-pressed', b.id === 'cat-' + name));
   if (!isAla()) { renderPackages(); renderItems(); }
   render();
+}
+
+/* Everything that depends on whether this category is priced line by line or
+   off a package. Called at boot too, so the first paint is already right. */
+function applyCategoryUI(){
+  document.querySelectorAll('[data-pkgonly]').forEach(el => { el.style.display = isAla() ? 'none' : ''; });
+  $('ala').style.display = isAla() ? '' : 'none';
+  $('elig-head').textContent = isAla() ? 'Session options' : 'Offer price eligibility';
+  $('outdoor-hint').textContent = isAla()
+    ? 'Park or location entry fees are paid by the client.'
+    : 'Offer price applies to studio sessions only. Park or location entry fees are paid by the client.';
+  $('elig').style.display = isAla() ? 'none' : '';
+  /* the prices screen only knows how to edit packages, and nothing uses those now */
+  if (isAla()) $('b-settings').hidden = true;
 }
 $('cat-maternity').addEventListener('click', () => setCategory('maternity'));
 $('cat-newborn').addEventListener('click', () => setCategory('newborn'));
@@ -1055,7 +1110,14 @@ async function loadLive(){
     sb.from('profiles').select('is_admin,active').eq('id', session.user.id).maybeSingle()
   ]);
   if (cfg.data && cfg.data.value){
-    try { const v = JSON.parse(cfg.data.value); if (v.category && v.category.packages){ applyCategory(v.category); showSaved(v.updated_at); } } catch {}
+    try {
+      const v = JSON.parse(cfg.data.value);
+      /* maternity is line by line now; a stored package catalogue is ignored */
+      if (v.category && v.category.groups){
+        CAT.categories.maternity = clone(v.category);
+        applyCategoryUI(); render(); showSaved(v.updated_at);
+      }
+    } catch {}
   }
   /* the line-by-line lists are a different shape - groups of items, no packages */
   if (sit.data && sit.data.value){
@@ -1086,8 +1148,9 @@ $('b-view').addEventListener('click', e => {
 });
 
 /* the page opens on maternity, so the line-by-line block starts hidden */
-$('ala').style.display = 'none';
-if ((location.hash||'').toLowerCase() === '#sitter') setCategory('sitter');
+applyCategoryUI();
+{ const h = (location.hash||'').replace('#','').toLowerCase();
+  if (['sitter','newborn','maternity'].includes(h)) setCategory(h); }
 
 if (window.self !== window.top) document.body.classList.add('embedded');
 loadLive().catch(() => {});
