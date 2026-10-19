@@ -589,6 +589,8 @@ window.LSHQuote = {get catalogue(){ return CAT; }, buildQuote};
 
 /* ---------- form rendering ---------- */
 function renderPackages(){
+  /* a line-by-line category has no packages - never throw over it */
+  if (!cat().packages) { $('pkgs').innerHTML = ''; return; }
   $('pkgs').innerHTML = cat().packages.map(p => `
     <button class="pkg" data-code="${p.code}" aria-pressed="${p.code===state.package}">
       ${p.tag ? `<span class="tag">${p.tag}</span>` : ''}
@@ -599,6 +601,7 @@ function renderPackages(){
 }
 function renderAddons(){
   const p = pkg();
+  if (!p || !cat().addons) { $('addons').innerHTML = ''; return; }
   const rm = state.removed[p.code] || {};
   const hasAlbum = [...p.includes, ...p.deliverables].some(it => it.k==='album' && !(it.k in rm)) || (state.addons.album_12x12||0) > 0;
   $('addons').innerHTML = cat().addons.map(a => {
@@ -615,7 +618,9 @@ function renderAddons(){
   }).join('');
 }
 function renderItems(){
-  const p = pkg(), rm = state.removed[p.code] || {};
+  const p = pkg();
+  if (!p) { $('items').innerHTML = ''; return; }
+  const rm = state.removed[p.code] || {};
   if (!p.includes.concat(p.deliverables).some(it => it.removable)) { $('items').innerHTML = '<div class="row"><div class="lbl"><small>Nothing in this package is set as removable. Change this in Prices & settings.</small></div></div>'; return; }
   $('items').innerHTML = [...p.includes, ...p.deliverables].filter(it => it.removable).map(it => {
     const off = it.k in rm;
@@ -863,7 +868,8 @@ function render(){
 }
 
 /* ---------- wiring ---------- */
-renderPackages(); renderCustoms();
+if (!isAla()) renderPackages();
+renderCustoms();
 $('c-name').value = state.client.name; $('c-date').value = state.client.shoot_date;
 $('t-social').checked = state.social; $('t-outdoor').checked = state.outdoor;
 
