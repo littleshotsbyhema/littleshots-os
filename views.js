@@ -125,9 +125,10 @@ const locTag = () => S.loc === "All" ? "" : `<span class="tag grey">${esc(S.loc)
 /* What this person has to do today, in one place: the jobs that sit in their
    name with the one thing each is waiting on, then their own tasks. */
 function meView() {
-  const jobs = myJobs(), tasks = myTasks();
+  const who = viewingId(), own = who === (S.me || {}).id;
+  const jobs = myJobs(who), tasks = myTasks(who);
   const late = jobs.filter(j => j.sla_status === "OVERDUE");
-  const name = (S.me && S.me.full_name) || "you";
+  const name = own ? ((S.me && S.me.full_name) || "you") : viewingName();
   const taskRow = t => `<tr onclick="A.editTask(${t.id})" style="cursor:pointer">
       <td><b>${esc(t.title)}</b>${t.job_client
         ? `<br><span style="color:var(--ink-soft);font-size:12px">${esc(t.job_client)}</span>` : ""}</td>
@@ -141,23 +142,36 @@ function meView() {
           j.shoot_at ? " · " + when(j.shoot_at) : ""}</span></td>
       <td><span class="pill ${slaPill(j)}">${esc(j.stage)}</span></td>
       <td>${esc(nextAction(j) || "Nothing outstanding")}</td></tr>`;
-  return `<div class="head"><h1>My work</h1>${locTag()}
+  return `<div class="head"><h1>${own ? "My work" : esc(name) + "'s work"}</h1>${locTag()}
       <span class="tag">${jobs.length} job${jobs.length === 1 ? "" : "s"}</span>
       ${tasks.length ? `<span class="tag">${tasks.length} task${tasks.length === 1 ? "" : "s"}</span>` : ""}
       ${late.length ? `<span class="tag red">${late.length} past SLA</span>` : ""}</div>
     <p class="sub">Everything in ${esc(name)}'s name, and what each one is waiting on.</p>
+    ${isAdmin() ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--ink-soft);font-weight:650">Looking at</span>
+      <select class="inp" style="max-width:240px" onchange="A.lookAt(this.value)">
+        <option value="">${esc((S.me && S.me.full_name) || "Me")} (me)</option>
+        ${S.people.filter(p => p.active && p.id !== (S.me || {}).id)
+          .map(p => `<option value="${esc(p.id)}" ${p.id === who ? "selected" : ""}
+            >${esc(p.full_name)}</option>`).join("")}
+      </select>
+      ${own ? "" : `<button class="btn sm" onclick="A.lookAt(null)">Back to mine</button>`}
+    </div>` : ""}
     <div class="acts" style="margin-bottom:12px">
       <button class="btn p sm" onclick="A.newTask(null)">+ New task</button></div>
 
-    <div class="panel"><h3>Jobs in my name</h3>
+    <div class="panel"><h3>${own ? "Jobs in my name" : "Jobs in " + esc(name) + "'s name"}</h3>
       <p class="ph">The next thing each one needs. Click a row to open it.</p>
       ${jobs.length ? `<table><thead><tr><th>Client</th><th>Stage</th><th>Next action</th></tr></thead>
         <tbody>${jobs.slice().sort((a, b) =>
           num(b.days_in_stage) - num(a.days_in_stage)).map(jobRow).join("")}</tbody></table>`
-        : `<div class="empty">Nothing is assigned to you right now</div>`}</div>
+        : `<div class="empty">${own ? "Nothing is assigned to you right now"
+             : "Nothing is assigned to " + esc(name) + " right now"}</div>`}</div>
 
-    <div class="panel"><h3>My tasks</h3>
-      <p class="ph">Open tasks someone has given you. Click one to update or close it.</p>
+    <div class="panel"><h3>${own ? "My tasks" : esc(name) + "'s tasks"}</h3>
+      <p class="ph">${own
+        ? "Open tasks someone has given you. Click one to update or close it."
+        : "Open tasks " + esc(name) + " has been given."}</p>
       ${tasks.length ? `<table><thead><tr><th>Task</th><th>Finish by</th><th>From</th></tr></thead>
         <tbody>${tasks.map(taskRow).join("")}</tbody></table>`
         : `<div class="empty">No open tasks</div>`}</div>`;

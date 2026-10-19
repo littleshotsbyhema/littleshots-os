@@ -185,7 +185,12 @@ const ruleOwner = (stage, grp) => {
 const ruleSplit = stage => !!ruleFor(stage, "bangalore") || !!ruleFor(stage, "cbe_erode");
 
 /* ---- ad-hoc tasks ---- */
-const myTasks = () => (S.tasks || []).filter(t => t.assignee_id === (S.me || {}).id && t.status === "open");
+/* An admin can look at anyone's page; everyone else only ever sees their own.
+   The tab badges always count your own work, whoever you are looking at. */
+const viewingId = () => (isAdmin() && S.lookAt) ? S.lookAt : (S.me || {}).id;
+const viewingName = () => (S.people.find(p => p.id === viewingId()) || {}).full_name || "you";
+const myTasks = (who) => (S.tasks || [])
+  .filter(t => t.assignee_id === (who || (S.me || {}).id) && t.status === "open");
 const openTasks = () => (S.tasks || []).filter(t => t.status === "open");
 const lateTasks = () => openTasks().filter(t => t.due_state === "OVERDUE");
 const tasksForJob = id => (S.tasks || []).filter(t => t.job_id === id);
@@ -221,7 +226,7 @@ function nextAction(j) {
   if (payGateCrossed(j, to))     return "Collect " + rupee(bal(j)) + " before " + to;
   return "Move it on to " + to;
 }
-const myJobs = () => pool().filter(j => j.owner_id === (S.me || {}).id);
+const myJobs = (who) => pool().filter(j => j.owner_id === (who || (S.me || {}).id));
 
 /* ---- what the studio still owes its own feed ---- */
 /* Three kinds of material come off one shoot. Each is listed on its own and
@@ -1872,6 +1877,8 @@ const A = {
     await refresh("Task reopened");
   },
   taskFilter(v) { S.taskView = v; render(); },
+  /* admins only - the picker is not rendered for anyone else */
+  lookAt(id) { if (!isAdmin()) return; S.lookAt = id || null; render(); },
 
   /* ---- is this worth putting out? ---- */
   askPost(id, kind, thenStage, childId) {
