@@ -696,6 +696,16 @@ const A = {
         ? " — needed before " + esc(thenStage) : ""}</p>
       <label>Photographer</label>${pick("cwPhot", j.photographer_id)}
       <label style="margin-top:10px">Stylist</label>${pick("cwSty", j.stylist_id)}
+
+      <p class="shead">Who looks after the job</p>
+      <label>Assigned to</label>
+      <select class="inp" id="cwOwner">
+        ${S.people.filter(p => p.active).map(p => `<option value="${esc(p.id)}"
+          ${p.id === j.owner_id ? "selected" : ""}>${esc(p.full_name)}</option>`).join("")}
+      </select>
+      <p class="hint" style="margin-top:6px">Whoever chases this job through pre-production —
+        often not the photographer. Leave it as it is to keep ${esc(j.owner_name || "the current owner")}.</p>
+
       <div class="acts" style="margin-top:16px">
         <button class="btn p" onclick="A.saveCrew(${id},${thenStage ? `'${esc(thenStage)}'` : "null"})">
           Save${thenStage ? " and continue" : ""}</button>
@@ -704,15 +714,21 @@ const A = {
         is work for named people, not for the job in general. Either can be changed later.</p>`);
   },
   async saveCrew(id, thenStage) {
+    const j = S.jobs.find(x => x.id === id);
     const phot = $("cwPhot").value || null;
     const sty = $("cwSty").value || null;
+    const owner = $("cwOwner").value || null;
     if (thenStage && (!phot || !sty))
       return toast("Pick both a photographer and a stylist", true);
     A.closeModal();
     const f = { photographer_id: phot, stylist_id: sty };
+    /* an owner sent with the move beats the stage's routing rule, so only
+       send it when it is actually a change */
+    if (owner && owner !== j.owner_id) f.owner_id = owner;
     if (thenStage) f.stage = thenStage;
     const names = [phot && nameOf(phot), sty && nameOf(sty)].filter(Boolean).join(" and ");
-    await patch(id, f, names ? "Shoot crew: " + names : "Crew cleared");
+    await patch(id, f, (names ? "Shoot crew: " + names : "Crew cleared") +
+      (f.owner_id ? " · assigned to " + nameOf(owner) : ""));
   },
 
   /* ---- the pre-production sheet ---- */
